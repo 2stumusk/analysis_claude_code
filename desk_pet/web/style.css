@@ -1,0 +1,130 @@
+:root {
+  --bg: #f3f1ec;
+  --panel: #ffffff;
+  --text: #1d1f23;
+  --muted: #6b7079;
+  --line: #e2ded6;
+  --chip: #f1eee8;
+  --accent: #e0703a;
+  --body: #2a2c31;
+  --body-hi: #3a3d44;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121316;
+    --panel: #1b1d21;
+    --text: #e8e6e3;
+    --muted: #979ca5;
+    --line: #2c2f35;
+    --chip: #24272c;
+    --body: #2d3036;
+    --body-hi: #41454d;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121316;
+  --panel: #1b1d21;
+  --text: #e8e6e3;
+  --muted: #979ca5;
+  --line: #2c2f35;
+  --chip: #24272c;
+  --body: #2d3036;
+  --body-hi: #41454d;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 24px;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 32px 16px;
+}
+@media (max-width: 860px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.stage { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.device {
+  position: relative;
+  width: min(100%, 700px);
+  padding: 34px 34px 22px;
+  border-radius: 36px;
+  background: linear-gradient(160deg, var(--body-hi), var(--body) 55%);
+  box-shadow: 0 30px 60px -20px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.08);
+}
+.led {
+  position: absolute; top: 14px; left: 50%;
+  width: 10px; height: 10px; margin-left: -5px; border-radius: 50%;
+  background: #3b3f46;
+  transition: background .2s, box-shadow .2s;
+}
+.led.on { background: var(--led, #ff8a3d); box-shadow: 0 0 12px var(--led, #ff8a3d); }
+.screen-wrap {
+  border-radius: 14px;
+  padding: 10px;
+  background: #050607;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
+}
+#screen { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 6px; }
+.buttons { display: flex; justify-content: center; gap: 48px; margin-top: 18px; }
+.hw {
+  width: 52px; height: 52px; border-radius: 50%;
+  border: 0; cursor: pointer;
+  background: radial-gradient(circle at 35% 30%, #4b4f57, #1c1e22);
+  box-shadow: 0 4px 0 #121316, 0 6px 14px rgba(0,0,0,.4);
+  color: #c9ccd1; font: 600 15px/1 system-ui, sans-serif;
+}
+.hw:active, .hw.pressed { transform: translateY(3px); box-shadow: 0 1px 0 #121316; }
+.hint { color: var(--muted); font-size: 13px; text-align: center; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 20px;
+  align-self: start;
+  min-width: 0;
+}
+.panel h1 { font-size: 18px; margin: 0; }
+.sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.conn { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+.conn.ok::before, .conn.bad::before {
+  content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;
+}
+.conn.ok::before { background: #3fb950; }
+.conn.bad::before { background: #f85149; }
+.group { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
+.group h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+.group h2 small { font-weight: 400; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.panel button, .chip {
+  font: inherit; font-size: 13px;
+  border: 1px solid var(--line); background: var(--chip); color: var(--text);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+.panel button:hover, .chip:hover { border-color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 4px 10px; border-radius: 999px; }
+.chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.agents { display: grid; gap: 8px; }
+.agent {
+  display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: center;
+  padding: 8px 10px; border-radius: 10px; background: var(--chip);
+}
+.agent .dot { width: 10px; height: 10px; border-radius: 50%; }
+.agent .name { font-weight: 600; }
+.agent .detail { grid-column: 2 / 4; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.agent .state { font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+pre {
+  max-height: 260px; overflow: auto; font-size: 11px; background: var(--chip);
+  padding: 10px; border-radius: 8px; margin: 10px 0 0;
+}

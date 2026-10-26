@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desk Pet 模拟器</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="layout">
+  <section class="stage">
+    <div class="device" id="device">
+      <div class="led" id="led"></div>
+      <div class="screen-wrap">
+        <canvas id="screen" width="320" height="240" aria-label="设备屏幕"></canvas>
+      </div>
+      <div class="buttons">
+        <button class="hw" id="btnA" title="切换页面（键盘 A）"><span>A</span></button>
+        <button class="hw" id="btnB" title="确认提醒 / 喂食（键盘 B）"><span>B</span></button>
+      </div>
+    </div>
+    <p class="hint">A：切换页面　B：确认提醒 / 喂食　键盘 A、B 同样可用</p>
+  </section>
+
+  <aside class="panel">
+    <header>
+      <h1>Desk Pet 模拟器</h1>
+      <p class="sub">320×240 屏幕 · 与未来 ESP32 固件同一份状态协议</p>
+      <p class="conn" id="conn">连接中…</p>
+    </header>
+
+    <div class="group">
+      <h2>演示</h2>
+      <div class="row">
+        <button id="demo">播放演示会话</button>
+        <button id="sound" aria-pressed="false">声音：关</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>预览表情 <small>只改本页，不影响守护进程</small></h2>
+      <div class="chips" id="preview"></div>
+    </div>
+
+    <div class="group">
+      <h2>Agent 状态</h2>
+      <div id="agents" class="agents"></div>
+    </div>
+
+    <details class="group">
+      <summary>原始状态 JSON（设备收到的就是这个）</summary>
+      <pre id="raw"></pre>
+    </details>
+  </aside>
+</main>
+<script src="sim.js"></script>
+</body>
+</html>
