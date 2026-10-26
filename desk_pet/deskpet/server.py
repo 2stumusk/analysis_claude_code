@@ -5,6 +5,8 @@ Routes
   GET  /api/state      current snapshot
   GET  /api/stream     the same snapshot as Server-Sent Events, pushed on change
   POST /api/button     {"button": "B"} acknowledge alerts, or feed the pet
+  GET  /api/config     which agents the screen shows; POST to change it
+  GET  /api/agents     every supported agent with its hook config
   POST /api/demo       play a scripted demo session
   GET  /               web simulator
 """
@@ -17,6 +19,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from . import agents as registry
 from . import demo
 from .core import Tracker
 from .pet import Pet
@@ -29,16 +32,57 @@ STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
 AGENT_RE = re.compile(r"^/hook/([a-z0-9_-]{1,24})$")
 MAX_BODY = 2 * 1024 * 1024
 PROTOCOL_VERSION = 1
+MAX_ROUTES = 1000
 
 
 class App:
-    def __init__(self, pet_path=None, usage=True, usage_interval=60):
+    def __init__(self, pet_path=None, usage=True, usage_interval=60, config_path=None,
+                 agents=None):
         self.changed = threading.Condition()
         self.pet = Pet(pet_path)
         self.tracker = Tracker(on_task_done=self._task_done)
         self.usage = ClaudeUsage() if usage else None
         self.usage_interval = usage_interval
         self.demo_stop = None
+        self.routes = {}  # (endpoint, session) -> agent that really sent it
+        self.config_path = config_path
+        self.config = {"mode": "custom", "agents": list(registry.DEFAULT_AGENTS)}
+        if config_path and os.path.exists(config_path):
+            try:
+                with open(config_path, encoding="utf-8") as f:
+                    self._apply_config(json.load(f))
+            except (OSError, ValueError):
+                pass
+        if agents:
+            self.set_config({"mode": "custom", "agents": agents})
+
+    def _apply_config(self, cfg):
+        if not isinstance(cfg, dict):
+            return
+        if cfg.get("mode") in ("custom", "auto"):
+            self.config["mode"] = cfg["mode"]
+        if isinstance(cfg.get("agents"), list):
+            chosen = registry.normalize_list(cfg["agents"])
+            if chosen:
+                self.config["agents"] = chosen
+
+    def set_config(self, cfg):
+        self._apply_config(cfg)
+        if self.config_path:
+            try:
+                os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+                with open(self.config_path, "w", encoding="utf-8") as f:
+                    json.dump(self.config, f)
+            except OSError:
+                pass
+        self.notify()
+        return dict(self.config)
+
+    def shown_agents(self):
+        if self.config["mode"] == "auto":
+            live = [a for a, v in self.tracker.snapshot()["agents"].items() if v["state"] != "offline"]
+            return registry.normalize_list(live) + [a for a in live if a not in registry.AGENTS]
+        return list(self.config["agents"])
 
     def _task_done(self, agent, result, duration, tools):
         self.pet.task_done(agent, result, duration, tools)
@@ -47,8 +91,24 @@ class App:
         with self.changed:
             self.changed.notify_all()
 
-    def handle_hook(self, agent, payload, event=None):
+    def route(self, endpoint, payload):
+        """Which agent a payload belongs to: the endpoint, unless the bridge's
+        hints say otherwise (Grok running Claude hooks, Claude Code on DeepSeek...)."""
+        hints = payload.pop("_deskpet", None) if isinstance(payload, dict) else None
+        sid = str(payload.get("session_id") or "") if isinstance(payload, dict) else ""
+        key = (endpoint, sid)
+        found = registry.identify(endpoint, payload if isinstance(payload, dict) else {}, hints)
+        if found and sid:
+            if len(self.routes) >= MAX_ROUTES:
+                self.routes.clear()
+            self.routes[key] = found
+        return found or self.routes.get(key, endpoint)
+
+    def handle_hook(self, endpoint, payload, event=None):
+        agent = self.route(endpoint, payload)
         ev = self.tracker.handle(agent, payload, event)
+        if ev == "SessionEnd" and isinstance(payload, dict):
+            self.routes.pop((endpoint, str(payload.get("session_id") or "")), None)
         self.notify()
         return ev
 
@@ -64,10 +124,17 @@ class App:
     def start_demo(self, speed=1.0):
         if self.demo_stop is not None:
             self.demo_stop.set()
-        self.demo_stop = demo.start(self.handle_hook, speed)
+        cast = self.shown_agents() if self.config["mode"] == "custom" else []
+        self.demo_stop = demo.start(self.handle_hook, cast or list(registry.DEFAULT_AGENTS), speed)
 
     def snapshot(self):
-        snap = self.tracker.snapshot()
+        shown = self.shown_agents()
+        snap = self.tracker.snapshot(shown)
+        for name, entry in snap["agents"].items():
+            info = registry.describe(name)
+            entry["label"], entry["abbr"] = info["label"], info["abbr"]
+        snap["order"] = shown
+        snap["mode"] = self.config["mode"]
         snap["v"] = PROTOCOL_VERSION
         snap["pet"] = self.pet.snapshot()
         snap["usage"] = {"claude": self.usage.snapshot()} if self.usage else None
@@ -112,6 +179,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, self.app.snapshot())
         if path == "/api/stream":
             return self._stream()
+        if path == "/api/config":
+            return self._json(200, dict(self.app.config, presets=registry.PRESETS))
+        if path == "/api/agents":
+            port = self.server.server_address[1]
+            out = []
+            for a in registry.ORDER:
+                info = registry.describe(a)
+                info["file"], info["text"], info["notes"] = registry.hook_config(a, port)
+                info["command"] = "python3 -m deskpet hooks " + a
+                out.append(info)
+            return self._json(200, out)
         if path in STATIC:
             name, ctype = STATIC[path]
             try:
@@ -150,6 +228,8 @@ class Handler(BaseHTTPRequestHandler):
             body = {}
         if url.path == "/api/button":
             return self._json(200, {"action": self.app.button(str(body.get("button", "")))})
+        if url.path == "/api/config":
+            return self._json(200, self.app.set_config(body))
         if url.path == "/api/demo":
             self.app.start_demo(float(body.get("speed") or 1.0))
             return self._json(200, {"ok": True})
@@ -178,8 +258,9 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
-def serve(host="127.0.0.1", port=7878, pet_path=None, usage=True, demo_on_start=False):
-    app = App(pet_path=pet_path, usage=usage)
+def serve(host="127.0.0.1", port=7878, pet_path=None, usage=True, demo_on_start=False,
+          config_path=None, agents=None):
+    app = App(pet_path=pet_path, usage=usage, config_path=config_path, agents=agents)
     handler = type("BoundHandler", (Handler,), {"app": app})
     httpd = ThreadingHTTPServer((host, port), handler)
     httpd.daemon_threads = True

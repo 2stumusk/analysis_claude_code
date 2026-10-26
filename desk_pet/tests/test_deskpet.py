@@ -12,10 +12,11 @@ from datetime import date
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from deskpet import core  # noqa: E402
+from deskpet import agents as registry  # noqa: E402
+from deskpet import core, demo  # noqa: E402
 from deskpet.core import Tracker, classify_tool  # noqa: E402
 from deskpet.pet import Pet  # noqa: E402
-from deskpet.server import serve  # noqa: E402
+from deskpet.server import App, serve  # noqa: E402
 from deskpet.usage import ClaudeUsage  # noqa: E402
 
 
@@ -61,7 +62,7 @@ class TrackerTest(unittest.TestCase):
         return self.t.snapshot()["agents"][agent]
 
     def test_offline_until_first_event(self):
-        snap = self.t.snapshot()
+        snap = self.t.snapshot(["claude", "codex"])
         self.assertEqual(snap["agents"]["claude"]["state"], "offline")
         self.assertEqual(snap["agents"]["codex"]["state"], "offline")
 
@@ -143,6 +144,119 @@ class TrackerTest(unittest.TestCase):
         self.t.handle("claude", ev("SessionStart"))
         self.clock.t += core.SESSION_STALE + 1
         self.assertEqual(self.state()["state"], "offline")
+
+
+    def test_gemini_events(self):
+        self.t.handle("gemini", ev("BeforeAgent", prompt="fix it"))
+        self.assertEqual(self.state("gemini")["state"], "thinking")
+        self.t.handle("gemini", ev("BeforeTool", tool_name="run_shell_command",
+                                   tool_input={"command": "pytest -q"}))
+        self.assertEqual((self.state("gemini")["state"], self.state("gemini")["detail"]),
+                         ("running", "pytest -q"))
+        self.t.handle("gemini", ev("BeforeTool", tool_name="read_file",
+                                   tool_input={"absolute_path": "/r/main.py"}))
+        self.assertEqual(self.state("gemini")["detail"], "main.py")
+        self.t.handle("gemini", ev("Notification", notification_type="ToolPermission"))
+        self.assertEqual(self.state("gemini")["state"], "waiting")
+        self.t.handle("gemini", ev("AfterAgent"))
+        self.assertEqual(self.state("gemini")["state"], "done")
+
+    def test_kimi_and_qwen_tool_names(self):
+        self.assertEqual(classify_tool("Shell", {"command": "ls"})[0], "running")
+        self.assertEqual(classify_tool("StrReplaceFile", {"path": "/a/b.ts"}), ("editing", "b.ts"))
+        self.assertEqual(classify_tool("write_file", {"file_path": "/a/c.md", "content": ""}), ("editing", "c.md"))
+        self.assertEqual(classify_tool("grep_search", {"pattern": "foo"}), ("reading", "foo"))
+
+    def test_duplicate_stop_counts_once(self):
+        self.t.handle("grok", ev("UserPromptSubmit"))
+        self.t.handle("grok", ev("Stop"))
+        self.clock.t += 1
+        self.t.handle("grok", ev("Stop"))
+        self.assertEqual(len(self.done), 1)
+
+
+class IdentifyTest(unittest.TestCase):
+    def test_rules(self):
+        idf = registry.identify
+        self.assertIsNone(idf("claude", {}, None))
+        self.assertIsNone(idf("claude", {}, {"procs": ["sh", "claude", "zsh"]}))
+        self.assertEqual(idf("claude", {}, {"procs": ["sh", "grok", "zsh"]}), "grok")
+        self.assertEqual(idf("claude", {}, {"procs": ["claude"], "base_url_host": "api.deepseek.com"}), "deepseek")
+        self.assertEqual(idf("claude", {}, {"base_url_host": "api.moonshot.cn"}), "kimi")
+        self.assertEqual(idf("claude", {}, {"base_url_host": "dashscope.aliyuncs.com"}), "qwen")
+        self.assertEqual(idf("claude", {"model": "deepseek-v4-pro"}, {}), "deepseek")
+        self.assertEqual(idf("claude", {}, {"as": "deepseek", "procs": ["grok"]}), "deepseek")
+        self.assertIsNone(idf("claude", {}, {"as": "not-an-agent"}))
+        # A Claude ancestor stops the walk before an outer agent further up.
+        self.assertIsNone(idf("claude", {}, {"procs": ["sh", "claude", "codex"]}))
+
+    def test_app_routes_session_after_first_hint(self):
+        app = App(usage=False)
+        app.set_config({"agents": ["claude", "deepseek"]})
+        app.handle_hook("claude", ev("SessionStart", sid="d1",
+                                     _deskpet={"base_url_host": "api.deepseek.com"}))
+        app.handle_hook("claude", ev("UserPromptSubmit", sid="d1"))  # e.g. no hints
+        snap = app.snapshot()
+        self.assertEqual(snap["agents"]["deepseek"]["state"], "thinking")
+        self.assertEqual(snap["agents"]["claude"]["state"], "offline")
+        self.assertEqual(snap["agents"]["deepseek"]["label"], "DEEPSEEK")
+        app.handle_hook("claude", ev("SessionEnd", sid="d1"))
+        self.assertEqual(app.routes, {})
+
+
+class ConfigTest(unittest.TestCase):
+    def test_custom_and_auto_modes_persist(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "config.json")
+            app = App(usage=False, config_path=path)
+            self.assertEqual(app.snapshot()["order"], ["claude", "codex"])
+            app.set_config({"agents": ["qwen", "bogus", "kimi", "kimi"]})
+            self.assertEqual(app.snapshot()["order"], ["qwen", "kimi"])  # registry order
+            app.set_config({"agents": []})  # never allow an empty screen in custom mode
+            self.assertEqual(app.config["agents"], ["qwen", "kimi"])
+            app.set_config({"mode": "auto"})
+            self.assertEqual(app.snapshot()["order"], [])
+            app.handle_hook("grok", ev("UserPromptSubmit"))
+            app.handle_hook("gemini", ev("BeforeAgent"))
+            snap = app.snapshot()
+            self.assertEqual(snap["order"], ["gemini", "grok"])
+            self.assertEqual(snap["focus"], "grok" if snap["agents"]["grok"]["last"] > snap["agents"]["gemini"]["last"] else "gemini")
+            again = App(usage=False, config_path=path)
+            self.assertEqual(again.config, {"mode": "auto", "agents": ["qwen", "kimi"]})
+
+    def test_hidden_agents_still_tracked(self):
+        app = App(usage=False)
+        app.handle_hook("kimi", ev("UserPromptSubmit"))
+        self.assertNotIn("kimi", app.snapshot()["agents"])
+        app.set_config({"agents": ["kimi"]})
+        self.assertEqual(app.snapshot()["agents"]["kimi"]["state"], "thinking")
+
+
+class HookConfigTest(unittest.TestCase):
+    def test_every_agent_has_parseable_config(self):
+        import tomllib
+        for agent in registry.ORDER:
+            path, text, notes = registry.hook_config(agent, 7878)
+            self.assertTrue(path.startswith("~/"), agent)
+            if path.endswith(".toml"):
+                data = tomllib.loads(text)
+                if agent == "kimi":
+                    self.assertTrue(all(set(h) == {"event", "command", "timeout"} for h in data["hooks"]))
+                else:
+                    self.assertEqual(data["ui"]["notifications"]["hooks"][0]["only_unfocused"], False)
+            else:
+                data = json.loads(text)
+                for entries in data["hooks"].values():
+                    for e in entries:
+                        self.assertIn("hook_bridge.py", e["hooks"][0]["command"])
+        self.assertIn("BeforeTool", json.loads(registry.hook_config("gemini")[1])["hooks"])
+        self.assertEqual(json.loads(registry.hook_config("gemini")[1])["hooks"]["BeforeTool"][0]["hooks"][0]["timeout"], 5000)
+
+    def test_demo_casts_every_selected_agent(self):
+        cast = ["kimi", "deepseek", "qwen", "grok"]
+        tl = demo.timeline(cast)
+        self.assertEqual({a for _, a, _ in tl}, set(cast))
+        self.assertEqual([x[0] for x in tl], sorted(x[0] for x in tl))
 
 
 class PetTest(unittest.TestCase):
@@ -258,6 +372,48 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((out.returncode, out.stdout, out.stderr), (0, b"", b""))
         _, body = self.req("/api/state")
         self.assertEqual(json.loads(body)["agents"]["codex"]["state"], "running")
+
+    def test_hook_bridge_grok_env_mode(self):
+        bridge = os.path.join(ROOT, "hooks", "hook_bridge.py")
+        env = dict(os.environ, GROK_EVENT="approval_required", GROK_SESSION_ID="g1", GROK_MESSAGE="run rm?")
+        out = subprocess.run([sys.executable, bridge, "grok", "--grok-env", "--port", str(self.port)],
+                             capture_output=True, timeout=10, env=env, stdin=subprocess.DEVNULL)
+        self.assertEqual((out.returncode, out.stdout, out.stderr), (0, b"", b""))
+        self.app.set_config({"agents": ["claude", "codex", "grok"]})
+        try:
+            _, body = self.req("/api/state")
+            self.assertEqual(json.loads(body)["agents"]["grok"]["state"], "waiting")
+        finally:
+            self.app.set_config({"agents": ["claude", "codex"]})
+
+    def test_hook_bridge_detects_deepseek_backend(self):
+        bridge = os.path.join(ROOT, "hooks", "hook_bridge.py")
+        env = dict(os.environ, ANTHROPIC_BASE_URL="https://api.deepseek.com/anthropic",
+                   ANTHROPIC_AUTH_TOKEN="sk-secret")
+        payload = json.dumps(ev("UserPromptSubmit", sid="ds-bridge")).encode()
+        out = subprocess.run([sys.executable, bridge, "claude", "--port", str(self.port)],
+                             input=payload, capture_output=True, timeout=10, env=env)
+        self.assertEqual(out.returncode, 0)
+        self.app.set_config({"agents": ["claude", "deepseek"]})
+        try:
+            _, body = self.req("/api/state")
+            agents = json.loads(body)["agents"]
+            self.assertEqual(agents["deepseek"]["state"], "thinking")
+            self.assertNotIn("sk-secret", body.decode())
+        finally:
+            self.app.set_config({"agents": ["claude", "codex"]})
+
+    def test_config_and_agents_api(self):
+        _, body = self.req("/api/agents")
+        catalog = json.loads(body)
+        self.assertEqual([a["id"] for a in catalog], registry.ORDER)
+        _, body = self.req("/api/config", {"agents": ["claude", "codex", "gemini"]})
+        try:
+            self.assertEqual(json.loads(body)["agents"], ["claude", "codex", "gemini"])
+            _, body = self.req("/api/state")
+            self.assertEqual(json.loads(body)["order"], ["claude", "codex", "gemini"])
+        finally:
+            self.req("/api/config", {"agents": ["claude", "codex"]})
 
     def test_hook_bridge_without_daemon_still_exits_zero(self):
         bridge = os.path.join(ROOT, "hooks", "hook_bridge.py")

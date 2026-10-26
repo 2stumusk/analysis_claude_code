@@ -1,82 +1,66 @@
 """deskpet command line.
 
-  python -m deskpet                 start the daemon and web simulator
-  python -m deskpet --demo          same, and play a demo session
-  python -m deskpet hooks claude    print hook config for ~/.claude/settings.json
-  python -m deskpet hooks codex     print hook config for ~/.codex/hooks.json
+  python -m deskpet                          start the daemon and web simulator
+  python -m deskpet --demo                   same, and play a demo session
+  python -m deskpet --agents claude,kimi     choose which agents the screen shows
+  python -m deskpet hooks <agent>            print hook config for one agent
+  python -m deskpet agents                   list supported agents
 """
 
 import argparse
-import json
 import os
-import shlex
 import sys
 
+from . import agents as registry
 from .server import serve
 
-BRIDGE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                      "hooks", "hook_bridge.py")
-CLAUDE_EVENTS = ["UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
-                 "PermissionRequest", "Notification", "SubagentStart", "SubagentStop",
-                 "PreCompact", "Stop", "StopFailure", "SessionEnd"]
-CODEX_EVENTS = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse",
-                "PostToolUse", "PermissionRequest", "SubagentStart", "SubagentStop",
-                "PreCompact", "PostCompact", "Stop", "Interrupt"]
-TOOL_EVENTS = {"PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"}
-
-
-def bridge_command(agent, port):
-    parts = [sys.executable or "python3", BRIDGE, agent]
-    if port != 7878:
-        parts += ["--port", str(port)]
-    if os.name == "nt":
-        return " ".join('"%s"' % p if " " in p else p for p in parts)
-    return " ".join(shlex.quote(p) for p in parts)
-
-
-def _entry(event, hook):
-    entry = {"hooks": [hook]}
-    if event in TOOL_EVENTS:
-        entry = {"matcher": "*", **entry}
-    return entry
-
-
-def hooks_config(agent, port):
-    url = "http://127.0.0.1:%d/hook/%s" % (port, agent)
-    command = {"type": "command", "command": bridge_command(agent, port), "timeout": 5}
-    if agent == "claude":
-        # HTTP hooks keep event order and need no extra process; SessionStart
-        # only accepts command hooks.
-        hooks = {"SessionStart": [_entry("SessionStart", command)]}
-        for ev in CLAUDE_EVENTS:
-            hooks[ev] = [_entry(ev, {"type": "http", "url": url, "timeout": 3})]
-        return {"hooks": hooks}
-    return {"hooks": {ev: [_entry(ev, command)] for ev in CODEX_EVENTS}}
+HOME = os.path.join(os.path.expanduser("~"), ".deskpet")
+STATUS = {"tested": "已实测", "docs": "按官方文档", "community": "按第三方资料", "unverified": "未核实"}
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="deskpet", description="Desk pet for coding agents")
     sub = p.add_subparsers(dest="cmd")
-    h = sub.add_parser("hooks", help="print hook configuration")
-    h.add_argument("agent", choices=["claude", "codex"])
+    h = sub.add_parser("hooks", help="print hook configuration for an agent")
+    h.add_argument("agent", choices=registry.ORDER)
     h.add_argument("--port", type=int, default=7878)
+    sub.add_parser("agents", help="list supported agents")
     p.add_argument("--host", default="127.0.0.1",
                    help="bind address (default 127.0.0.1; hook payloads contain your prompts)")
     p.add_argument("--port", type=int, default=7878)
+    p.add_argument("--agents", help="comma-separated agents to show, or a preset: "
+                   + ", ".join(registry.PRESETS))
     p.add_argument("--demo", action="store_true", help="play a demo session on start")
     p.add_argument("--no-usage", action="store_true", help="do not read ~/.claude/projects")
-    p.add_argument("--state-file", default=os.path.join(os.path.expanduser("~"), ".deskpet", "pet.json"))
+    p.add_argument("--state-file", default=os.path.join(HOME, "pet.json"))
+    p.add_argument("--config-file", default=os.path.join(HOME, "config.json"))
     args = p.parse_args(argv)
 
     if args.cmd == "hooks":
-        print(json.dumps(hooks_config(args.agent, args.port), indent=2))
+        path, text, notes = registry.hook_config(args.agent, args.port)
+        for note in ["写入 " + path] + notes:
+            print("# " + note, file=sys.stderr)
+        print(text)
+        return 0
+    if args.cmd == "agents":
+        for a in registry.ORDER:
+            info = registry.describe(a)
+            print("%-9s %-26s %-30s %s" % (a, info["name"], info["config"], STATUS[info["status"]]))
         return 0
 
-    app, httpd = serve(args.host, args.port, args.state_file,
-                       usage=not args.no_usage, demo_on_start=args.demo)
+    chosen = None
+    if args.agents:
+        chosen = registry.PRESETS.get(args.agents) or [x.strip() for x in args.agents.split(",")]
+        unknown = [x for x in chosen if x not in registry.AGENTS]
+        if unknown:
+            p.error("unknown agent(s): %s (choose from %s)" % (", ".join(unknown), ", ".join(registry.ORDER)))
+
+    app, httpd = serve(args.host, args.port, args.state_file, usage=not args.no_usage,
+                       demo_on_start=args.demo, config_path=args.config_file, agents=chosen)
     print("deskpet: simulator at http://%s:%d/" % (
         "127.0.0.1" if args.host in ("0.0.0.0", "") else args.host, args.port))
-    print("         hook config: python -m deskpet hooks claude | codex")
+    print("         showing: %s (%s mode)" % (", ".join(app.config["agents"]), app.config["mode"]))
+    print("         hook config: python -m deskpet hooks <agent>")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

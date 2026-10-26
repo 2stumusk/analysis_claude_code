@@ -14,7 +14,10 @@
     thinking: "THINKING", reading: "READING", editing: "EDITING", running: "RUNNING",
     waiting: "NEEDS YOU", done: "DONE", error: "ERROR", idle: "IDLE", offline: "OFFLINE",
   };
-  const AGENT_NAMES = { claude: "CLAUDE", codex: "CODEX" };
+  const SHORT = {
+    thinking: "THINK", reading: "READ", editing: "EDIT", running: "RUN",
+    waiting: "WAIT", done: "DONE", error: "ERR", idle: "IDLE", offline: "OFF",
+  };
   const VIEWS = ["face", "clock", "agents", "stats"];
   const BG = "#0b0d10", FG = "#e8e6e3", DIM = "#7a808a", FAINT = "#262a31";
 
@@ -68,14 +71,30 @@
     ctx.fillText(str, x, y);
   }
 
+  const OFFLINE = { state: "offline", detail: "", tools: 0, sessions: 0, cwd: "", alert: false };
+
   function agentList() {
-    return snap ? Object.keys(snap.agents) : ["claude", "codex"];
+    return snap ? (snap.order || Object.keys(snap.agents)) : ["claude", "codex"];
+  }
+
+  function agentOf(name) {
+    return (snap && snap.agents[name]) || OFFLINE;
+  }
+
+  // Screen names come from the daemon so new agents need no firmware change.
+  function label(name) {
+    const a = snap && snap.agents[name];
+    return (a && a.label) || String(name || "").toUpperCase().slice(0, 8);
+  }
+
+  function abbr(name) {
+    const a = snap && snap.agents[name];
+    return (a && a.abbr) || String(name || "").toUpperCase().slice(0, 2);
   }
 
   function focusAgent() {
-    if (!snap) return { name: "claude", a: { state: "offline", detail: "" } };
-    const name = snap.focus || agentList()[0];
-    return { name, a: snap.agents[name] };
+    const name = (snap && snap.focus) || agentList()[0] || null;
+    return { name, a: agentOf(name) };
   }
 
   function faceState() {
@@ -265,20 +284,29 @@
   function topBar(t) {
     const d = new Date();
     text(`${pad(d.getHours())}:${pad(d.getMinutes())}`, 10, 18, { size: 14, weight: 700, font: MONO });
+    const all = agentList();
+    const short = all.length > 2;  // full names fit for two agents, abbreviations beyond
+    const tags = all.map((name) => short ? abbr(name) : label(name));
+    // Shrink type and spacing until every agent fits right of the clock.
+    const room = W - 8 - 62;
+    let size = 10, gap = short ? 18 : 22;
+    const widthAt = (sz, g) => {
+      ctx.font = `600 ${sz}px ${SANS}`;
+      return tags.reduce((sum, tag) => sum + ctx.measureText(tag).width + g, 0);
+    };
+    while (widthAt(size, gap) > room && size > 8) { size -= 1; gap -= 3; }
     let x = W - 8;
-    const names = agentList().slice().reverse();
-    for (const name of names) {
-      const a = snap ? snap.agents[name] : { state: "offline" };
-      const label = AGENT_NAMES[name] || name.toUpperCase().slice(0, 8);
-      ctx.font = `600 10px ${SANS}`;
-      const w = ctx.measureText(label).width;
-      text(label, x, 17, { size: 10, weight: 600, color: a.state === "offline" ? DIM : FG, align: "right" });
+    for (let i = all.length - 1; i >= 0; i--) {
+      const a = agentOf(all[i]);
+      ctx.font = `600 ${size}px ${SANS}`;
+      const w = ctx.measureText(tags[i]).width;
+      text(tags[i], x, 17, { size, weight: 600, color: a.state === "offline" ? DIM : FG, align: "right" });
       const pulse = a.alert ? 0.5 + 0.5 * Math.sin(t * 8) : 1;
       ctx.globalAlpha = pulse;
       ctx.fillStyle = COLORS[a.state];
-      ctx.beginPath(); ctx.arc(x - w - 8, 13, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x - w - 7, 13, size > 9 ? 4 : 3.5, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
-      x -= w + 22;
+      x -= w + gap;
     }
     if (!connected) text("NO DAEMON", 10, 34, { size: 9, color: COLORS.error, weight: 700 });
   }
@@ -318,11 +346,11 @@
 
     const { name, a } = focusAgent();
     const color = COLORS[st];
-    const label = LABELS[st];
-    const agentLabel = st === "offline" && !preview ? "" : (AGENT_NAMES[name] || name.toUpperCase());
-    text(label, 12, 196, { size: 20, weight: 800, color });
+    const stateLabel = LABELS[st];
+    const agentLabel = (st === "offline" && !preview) || !name ? "" : label(name);
+    text(stateLabel, 12, 196, { size: 20, weight: 800, color });
     ctx.font = `800 20px ${SANS}`;
-    const lw = ctx.measureText(label).width;
+    const lw = ctx.measureText(stateLabel).width;
     if (agentLabel) text(agentLabel, 12 + lw + 8, 196, { size: 10, weight: 600, color: DIM });
 
     if (!preview && a.task_start && st !== "idle" && st !== "offline") {
@@ -353,17 +381,31 @@
 
     // mini face + agent pills
     face(52, 190, 0.42, faceState(), t, snap ? snap.pet.mood : "ok");
-    let y = 176;
-    for (const name of agentList()) {
-      const a = snap ? snap.agents[name] : { state: "offline" };
-      ctx.fillStyle = COLORS[a.state];
-      ctx.beginPath(); ctx.arc(116, y - 4, 4, 0, Math.PI * 2); ctx.fill();
-      text(AGENT_NAMES[name] || name.toUpperCase(), 128, y, { size: 11, weight: 700 });
-      text(LABELS[a.state], 190, y, { size: 11, weight: 700, color: COLORS[a.state] });
-      if (a.task_start && a.state !== "idle" && a.state !== "offline") {
-        text(fmtDur(now() - a.task_start), W - 12, y, { size: 11, font: MONO, color: DIM, align: "right" });
+    const names = agentList();
+    if (names.length <= 3) {
+      let y = 176;
+      for (const name of names) {
+        const a = agentOf(name);
+        ctx.fillStyle = COLORS[a.state];
+        ctx.beginPath(); ctx.arc(116, y - 4, 4, 0, Math.PI * 2); ctx.fill();
+        text(label(name), 128, y, { size: 11, weight: 700 });
+        text(LABELS[a.state], 202, y, { size: 11, weight: 700, color: COLORS[a.state] });
+        if (a.task_start && a.state !== "idle" && a.state !== "offline") {
+          text(fmtDur(now() - a.task_start), W - 12, y, { size: 11, font: MONO, color: DIM, align: "right" });
+        }
+        y += 22;
       }
-      y += 22;
+    } else {
+      // two columns of "● DS RUN" chips, up to four rows
+      names.slice(0, 8).forEach((name, i) => {
+        const a = agentOf(name);
+        const x = 104 + (i % 2) * 106, y = 166 + Math.floor(i / 2) * 18;
+        const pulse = a.alert ? 0.5 + 0.5 * Math.sin(t * 8) : 1;
+        ctx.globalAlpha = pulse; ctx.fillStyle = COLORS[a.state];
+        ctx.beginPath(); ctx.arc(x + 4, y - 4, 4, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+        text(abbr(name), x + 14, y, { size: 11, weight: 800 });
+        text(SHORT[a.state], x + 38, y, { size: 11, weight: 700, color: COLORS[a.state] });
+      });
     }
     alertRing(t);
   }
@@ -371,13 +413,18 @@
   function viewAgents(t) {
     text("AGENTS", 12, 22, { size: 13, weight: 800, color: DIM });
     const names = agentList();
+    if (!names.length) {
+      text("no agent selected", W / 2, H / 2, { size: 12, color: DIM, align: "center" });
+      return;
+    }
+    if (names.length > 3) return agentRows(t, names);
     const cardH = Math.min(96, (H - 36 - 8 * (names.length - 1)) / Math.max(1, names.length));
     names.forEach((name, i) => {
-      const a = snap ? snap.agents[name] : { state: "offline", detail: "" };
+      const a = agentOf(name);
       const y = 32 + i * (cardH + 8);
       rrect(8, y, W - 16, cardH, 10); ctx.fillStyle = "#15181d"; ctx.fill();
       ctx.fillStyle = COLORS[a.state]; rrect(8, y, 5, cardH, 2.5); ctx.fill();
-      text(AGENT_NAMES[name] || name.toUpperCase(), 22, y + 22, { size: 14, weight: 800 });
+      text(label(name), 22, y + 22, { size: 14, weight: 800 });
       text(LABELS[a.state], W - 20, y + 22, { size: 12, weight: 800, color: COLORS[a.state], align: "right" });
       ctx.font = `400 12px ${MONO}`;
       text(fit(a.detail || (a.state === "offline" ? "not connected" : a.state === "done" ? "task finished" : "—"), W - 44), 22, y + 44, { size: 12, font: MONO, color: "#b9bec6" });
@@ -391,6 +438,29 @@
         ctx.strokeStyle = COLORS.waiting; ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 6); ctx.lineWidth = 2;
         rrect(8, y, W - 16, cardH, 10); ctx.stroke(); ctx.globalAlpha = 1;
       }
+    });
+  }
+
+  // Compact list for 4-8 agents: one row each.
+  function agentRows(t, names) {
+    const rowH = Math.min(26, (H - 40) / names.length);
+    names.forEach((name, i) => {
+      const a = agentOf(name);
+      const y = 32 + i * rowH;
+      if (i % 2 === 0) { ctx.fillStyle = "#12151a"; ctx.fillRect(6, y, W - 12, rowH); }
+      if (a.alert) {
+        ctx.globalAlpha = 0.35 + 0.35 * Math.sin(t * 6); ctx.fillStyle = COLORS.waiting;
+        ctx.fillRect(6, y, W - 12, rowH); ctx.globalAlpha = 1;
+      }
+      const base = y + rowH / 2 + 4;
+      ctx.fillStyle = COLORS[a.state];
+      ctx.beginPath(); ctx.arc(16, base - 4, 4, 0, Math.PI * 2); ctx.fill();
+      text(label(name), 26, base, { size: 11, weight: 800, color: a.state === "offline" ? DIM : FG });
+      text(SHORT[a.state], 100, base, { size: 11, weight: 800, color: COLORS[a.state] });
+      const busy = a.task_start && a.state !== "idle" && a.state !== "offline";
+      if (busy) text(fmtDur(now() - a.task_start), W - 12, base, { size: 10, font: MONO, color: DIM, align: "right" });
+      ctx.font = `400 10px ${MONO}`;
+      text(fit(a.detail || a.cwd || "", W - 150 - (busy ? 44 : 0)), 142, base, { size: 10, font: MONO, color: "#b9bec6" });
     });
   }
 
@@ -588,11 +658,12 @@
   const agentsEl = document.getElementById("agents"), rawEl = document.getElementById("raw");
   function renderPanel() {
     agentsEl.innerHTML = "";
-    for (const [name, a] of Object.entries(snap.agents)) {
+    for (const name of agentList()) {
+      const a = agentOf(name);
       const row = document.createElement("div");
       row.className = "agent";
       const dot = document.createElement("span"); dot.className = "dot"; dot.style.background = COLORS[a.state];
-      const nm = document.createElement("span"); nm.className = "name"; nm.textContent = AGENT_NAMES[name] || name;
+      const nm = document.createElement("span"); nm.className = "name"; nm.textContent = label(name);
       const st = document.createElement("span"); st.className = "state"; st.textContent = LABELS[a.state];
       const dt = document.createElement("span"); dt.className = "detail";
       dt.textContent = [a.detail, a.cwd, a.sessions ? `${a.sessions} 个会话` : ""].filter(Boolean).join(" · ") || "—";
@@ -602,7 +673,87 @@
     rawEl.textContent = JSON.stringify(snap, null, 2);
   }
 
+  // ---------- agent selection ----------
+  const PRESET_NAMES = { duo: "Claude + Codex", global: "海外", china: "国产", all: "全部" };
+  const STATUS = { tested: "已实测", docs: "按官方文档", community: "按第三方资料", unverified: "未核实" };
+  let config = null, catalog = [];
+  const pickEl = document.getElementById("pick"), presetsEl = document.getElementById("presets");
+  const pickNote = document.getElementById("pickNote");
+
+  async function loadConfig() {
+    try {
+      [config, catalog] = await Promise.all([
+        fetch("api/config", { cache: "no-store" }).then((r) => r.json()),
+        fetch("api/agents", { cache: "no-store" }).then((r) => r.json()),
+      ]);
+      renderPicker(); renderSetup();
+    } catch { /* daemon offline: the connection line already says so */ }
+  }
+
+  async function saveConfig(patch) {
+    config = Object.assign(config, await post("api/config", patch));
+    renderPicker();
+  }
+
+  function renderPicker() {
+    document.querySelectorAll(".seg-btn").forEach((b) => {
+      const on = b.dataset.mode === config.mode;
+      b.classList.toggle("active", on); b.setAttribute("aria-checked", String(on));
+      b.onclick = () => saveConfig({ mode: b.dataset.mode });
+    });
+    const auto = config.mode === "auto";
+    presetsEl.innerHTML = "";
+    for (const [key, list] of Object.entries(config.presets || {})) {
+      const b = document.createElement("button");
+      b.textContent = PRESET_NAMES[key] || key; b.disabled = auto;
+      b.onclick = () => saveConfig({ mode: "custom", agents: list });
+      presetsEl.appendChild(b);
+    }
+    pickEl.innerHTML = "";
+    for (const info of catalog) {
+      const on = config.agents.includes(info.id);
+      const b = document.createElement("button");
+      b.className = "chip" + (on ? " on" : ""); b.disabled = auto;
+      b.textContent = info.label; b.title = info.name;
+      b.setAttribute("aria-pressed", String(on));
+      b.onclick = () => {
+        const next = on ? config.agents.filter((x) => x !== info.id) : config.agents.concat(info.id);
+        if (next.length) saveConfig({ agents: next });
+      };
+      pickEl.appendChild(b);
+    }
+    pickNote.textContent = auto
+      ? "自动模式：哪个 Agent 有活动会话就显示哪个，全部空闲时显示 OFFLINE。"
+      : `已选 ${config.agents.length} 个。超过 2 个时顶栏用缩写，超过 3 个时列表页改为紧凑行。`;
+  }
+
+  function renderSetup() {
+    const list = document.getElementById("setupList");
+    list.innerHTML = "";
+    for (const info of catalog) {
+      const box = document.createElement("div"); box.className = "setup-item";
+      const head = document.createElement("header");
+      const name = document.createElement("b"); name.textContent = info.name;
+      const badge = document.createElement("span"); badge.className = "badge " + info.status;
+      badge.textContent = STATUS[info.status] || info.status;
+      head.append(name, badge);
+      const where = document.createElement("div");
+      const cmd = document.createElement("code"); cmd.textContent = info.command;
+      where.append(cmd, document.createTextNode(" → " + info.file));
+      box.append(head, where);
+      if (info.notes.length) {
+        const ul = document.createElement("ul");
+        for (const n of info.notes) { const li = document.createElement("li"); li.textContent = n; ul.appendChild(li); }
+        box.appendChild(ul);
+      }
+      const pre = document.createElement("pre"); pre.textContent = info.text;
+      box.appendChild(pre);
+      list.appendChild(box);
+    }
+  }
+
   renderChips();
+  loadConfig();
   resize();
   window.addEventListener("resize", resize);
   connect();

@@ -128,3 +128,23 @@ pre {
   max-height: 260px; overflow: auto; font-size: 11px; background: var(--chip);
   padding: 10px; border-radius: 8px; margin: 10px 0 0;
 }
+
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; margin-bottom: 10px; }
+.panel .seg-btn { border: 0; border-radius: 0; background: transparent; padding: 6px 12px; }
+.panel .seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+.panel .seg-btn.active { background: var(--accent); color: #fff; }
+.presets { margin-bottom: 10px; }
+.panel .presets button { padding: 3px 10px; font-size: 12px; }
+.chip.on { background: var(--text); border-color: var(--text); color: var(--panel); }
+.chip:disabled { opacity: .45; cursor: default; }
+.note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.setup { display: grid; gap: 10px; margin-top: 10px; }
+.setup-item { background: var(--chip); border-radius: 10px; padding: 10px; min-width: 0; }
+.setup-item header { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.setup-item b { font-size: 13px; }
+.badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+.badge.tested { color: #3fb950; border-color: currentColor; }
+.badge.unverified { color: #d29922; border-color: currentColor; }
+.setup-item code { font-size: 12px; overflow-wrap: anywhere; }
+.setup-item ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+.setup-item pre { max-height: 180px; }

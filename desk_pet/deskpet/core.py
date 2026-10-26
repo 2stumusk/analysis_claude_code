@@ -24,24 +24,38 @@ PRIORITY = {
 }
 BUSY = {"thinking", "reading", "editing", "running"}
 
+# Tool names across Claude Code, Codex, Gemini CLI / Qwen Code, Kimi and Muse.
 READ_TOOLS = {
     "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "NotebookRead",
     "read_file", "list_dir", "grep", "glob", "web_search", "view_image",
+    "read_many_files", "list_directory", "search_file_content", "grep_search",
+    "web_fetch", "google_web_search", "ReadFile", "ReadMediaFile", "SearchWeb",
+    "FetchURL",
 }
 EDIT_TOOLS = {
     "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch", "edit",
-    "write_file",
+    "write_file", "replace", "WriteFile", "StrReplaceFile",
 }
 RUN_TOOLS = {
     "Bash", "BashOutput", "KillShell", "PowerShell", "shell", "exec_command",
-    "local_shell", "unified_exec",
+    "local_shell", "unified_exec", "run_shell_command", "Shell",
 }
 DELEGATE_TOOLS = {"Task", "Agent"}
 
 # Notification types that mean "a human has to look at the screen now".
 ATTENTION_NOTIFICATIONS = {
     "permission_prompt", "elicitation_dialog", "elicitation_url_dialog",
-    "agent_needs_input",
+    "agent_needs_input", "ToolPermission",
+}
+# Other CLIs' event names mapped onto the Claude Code vocabulary used below.
+EVENT_ALIASES = {
+    "BeforeAgent": "UserPromptSubmit",   # Gemini CLI
+    "AfterAgent": "Stop",
+    "BeforeTool": "PreToolUse",
+    "AfterTool": "PostToolUse",
+    "PreCompress": "PreCompact",
+    "PermissionResult": "PermissionGranted",  # Kimi Code
+    "StopCancelled": "Interrupt",             # Grok Build
 }
 # Permission modes in which a PermissionRequest never reaches the user.
 AUTO_APPROVE_MODES = {"bypassPermissions", "dontAsk", "autoApproved", "approved"}
@@ -51,6 +65,7 @@ PERMISSION_RESOLVED = {
 }
 
 DONE_HOLD = 45          # seconds a "done"/"error" face stays before going idle
+DUPLICATE_STOP = 3      # a second Stop this soon after the first is the same turn
 WAIT_GRACE = 1.5        # auto-approved requests resolve within this window
 BUSY_STALE = 20 * 60    # a busy session with no events for this long is idle
 SESSION_STALE = 60 * 60  # an idle session with no events for this long is gone
@@ -66,7 +81,8 @@ def classify_tool(tool_name, tool_input):
     """Return (state, detail) for a tool call."""
     name = tool_name or ""
     inp = tool_input if isinstance(tool_input, dict) else {}
-    path = inp.get("file_path") or inp.get("path") or inp.get("notebook_path")
+    path = (inp.get("file_path") or inp.get("path") or inp.get("absolute_path")
+            or inp.get("notebook_path") or inp.get("dir_path"))
 
     if name in RUN_TOOLS or (name not in READ_TOOLS | EDIT_TOOLS and "command" in inp):
         cmd = inp.get("command", "")
@@ -125,16 +141,17 @@ class Session:
 class Tracker:
     """Thread-safe store of agent sessions, fed by hook payloads."""
 
-    def __init__(self, agents=("claude", "codex"), clock=time.time, on_task_done=None):
+    def __init__(self, clock=time.time, on_task_done=None):
         self.clock = clock
         self.on_task_done = on_task_done
         self.lock = threading.RLock()
-        self.agents = {a: {} for a in agents}
+        self.agents = {}
 
     def handle(self, agent, payload, event=None):
         """Apply one hook payload. Returns the event name that was used."""
         payload = payload if isinstance(payload, dict) else {}
         ev = event or payload.get("hook_event_name") or payload.get("type") or ""
+        ev = EVENT_ALIASES.get(ev, ev)
         sid = str(payload.get("session_id") or payload.get("thread-id")
                   or payload.get("thread_id") or "default")
         now = self.clock()
@@ -188,7 +205,8 @@ class Tracker:
                 elif kind == "agent_completed":
                     finished = self._finish(s, "done", now)
             elif ev in ("Stop", "agent-turn-complete"):
-                finished = self._finish(s, "done", now)
+                if not (s.state == "done" and now - s.since < DUPLICATE_STOP):
+                    finished = self._finish(s, "done", now)
             elif ev == "StopFailure":
                 finished = self._finish(s, "error", now)
                 s.detail = _clip(payload.get("error") or payload.get("message") or "failed")
@@ -226,11 +244,13 @@ class Tracker:
                         acted = True
         return acted
 
-    def snapshot(self):
+    def snapshot(self, show=None):
+        """State of the agents in `show` (default: every agent seen so far)."""
         now = self.clock()
         agents = {}
         with self.lock:
-            for name, sessions in self.agents.items():
+            for name in (show if show is not None else list(self.agents)):
+                sessions = self.agents.get(name, {})
                 for sid in [k for k, s in sessions.items()
                             if s.effective(now) == "idle" and now - s.last > SESSION_STALE]:
                     del sessions[sid]

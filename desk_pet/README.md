@@ -1,6 +1,6 @@
-# Desk Pet：Claude Code / Codex 桌面状态宠物
+# Desk Pet：AI 编程 Agent 桌面状态宠物
 
-一个放在桌上的小屏幕宠物：显示 Claude Code 和 Codex 正在做什么、什么时候需要你，空闲时当时钟用，Agent 每完成一个任务它就成长一点。
+一个放在桌上的小屏幕宠物：显示 Claude Code、Codex、Gemini、Qwen、Kimi、DeepSeek、Grok、Muse 这些 Agent 正在做什么、什么时候需要你，空闲时当时钟用，Agent 每完成一个任务它就成长一点。
 
 当前阶段：**电脑端守护进程 + 网页模拟器**（还没有硬件）。模拟器画的就是未来 320×240 屏幕上的内容，读的也是设备将来收到的同一份状态 JSON，硬件到手后只需要写固件把它画出来。
 
@@ -8,33 +8,52 @@
 
 ```bash
 cd desk_pet
-python3 -m deskpet --demo        # 启动并播放一段演示会话
+python3 -m deskpet --demo                    # 启动并播放一段演示会话
+python3 -m deskpet --agents china --demo     # 只显示国产三家
 # 浏览器打开 http://127.0.0.1:7878/
 ```
 
 需要 Python 3.9+，不用装任何依赖。
 
-### 接入 Claude Code
+## 支持的 Agent
 
 ```bash
-python3 -m deskpet hooks claude
+python3 -m deskpet agents           # 列表
+python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stderr 里有写到哪个文件、注意事项）
 ```
 
-把输出的 `hooks` 合并进 `~/.claude/settings.json`（或项目里的 `.claude/settings.json`）。
+| id | 产品 | 配置写到 | 接法 | 可信度 |
+|---|---|---|---|---|
+| `claude` | Claude Code | `~/.claude/settings.json` | 全部生命周期 hooks | **已实测**（Claude Code 2.1.310） |
+| `codex` | Codex CLI | `~/.codex/hooks.json` | 全部生命周期 hooks | 按第三方资料 |
+| `gemini` | Gemini CLI | `~/.gemini/settings.json` | `BeforeTool` `AfterAgent` 等 Gemini 自己的事件名，timeout 单位是毫秒 | 按官方文档 |
+| `qwen` | Qwen Code | `~/.qwen/settings.json` | 与 Claude Code 同名的事件，工具名是 `run_shell_command` 这类 | 按官方文档 |
+| `kimi` | Kimi Code | `~/.kimi-code/config.toml` | TOML `[[hooks]]`，只允许 event / matcher / command / timeout | 按官方文档 |
+| `deepseek` | DeepSeek | `~/.claude/settings.json` | DeepSeek 没有自己的 CLI，官方方案是用 Claude Code 接它的 Anthropic 兼容接口，deskpet 按 API 地址自动识别 | 按官方文档 |
+| `grok` | Grok Build | `~/.grok/config.toml` | 通知 hooks（就绪 / 待批准 / 完成 / 出错）；Grok 还会执行 `~/.claude/settings.json` 里的 hooks，deskpet 按进程自动识别 | 按官方文档 |
+| `muse` | Muse Code | `~/.config/muse/settings.json` | 事件名与 Claude Code 一致 | **未核实**：只查到第三方资料 |
 
-- 大部分事件用 Claude Code 自带的 HTTP hook 直接发给守护进程，不额外起进程，事件顺序也有保证。
-- `SessionStart` 只支持 command hook，所以用 `hooks/hook_bridge.py` 转发。
-- 守护进程没开时，HTTP hook 会连不上，Claude Code 照常工作；如果你嫌调试日志里有报错，可以把它们都换成 command hook（参考 Codex 的配置）。
+"按官方文档"表示格式来自官方文档或官方仓库里的文档，但还没在真实环境里跑过。不同版本的字段可能有变化，装上后看一眼 Agent 自己的 `/hooks` 命令是否已加载。
 
-### 接入 Codex
+### 可选模式
 
-```bash
-python3 -m deskpet hooks codex
-```
+网页右侧的"显示哪些 Agent"，或者启动参数 `--agents`：
 
-把输出写进 `~/.codex/hooks.json`，重启 Codex，在 `/hooks` 里信任这些命令。Codex 全部走 `hook_bridge.py`：它从 stdin 读事件、POST 给守护进程、**不输出任何内容并始终以 0 退出**，不会阻塞或影响 Agent。
+- **自选**：勾选要显示的 Agent。预设有 `duo`（Claude + Codex，默认）、`global`（海外）、`china`（Kimi、DeepSeek、Qwen）、`all`（全部 8 个）。也可以写成 `--agents claude,kimi,deepseek`。
+- **自动**：哪个 Agent 有活动会话就显示哪个。
+- 选择会保存在 `~/.deskpet/config.json`。没显示的 Agent 照样在后台记录状态，切换后立即可见。
+- 屏幕自动适配数量：超过 2 个时，顶栏改用缩写（CL CX GM QW KM DS GK MU）；超过 3 个时，时钟页改为两列小标签，Agent 页改为紧凑行（每个 Agent 一行）。
 
-旧版 Codex 的 `notify` 也能用：`notify = ["python3", "/绝对路径/hooks/hook_bridge.py", "codex"]`。
+### 自动识别"到底是谁"
+
+同一个 Claude Code 可以接 DeepSeek、Kimi、Qwen 的接口，Grok 也会执行 Claude Code 的 hooks。为了区分它们，所有 hook 都经过 `hooks/hook_bridge.py`，它会附带几条线索：
+
+1. **父进程名**：调用链上先出现 `grok` / `muse` / `kimi` / `qwen` / `gemini` / `codex`，就归给那个 Agent；先出现 `claude`，就确认是 Claude Code。
+2. **`ANTHROPIC_BASE_URL` 的主机名**：`deepseek` → DEEPSEEK，`moonshot` / `kimi` → KIMI，`dashscope` / `aliyuncs` → QWEN，等等。
+3. **模型名**：`ANTHROPIC_MODEL` 或事件里的 `model` 字段。
+4. **兜底**：走自建代理或路由时识别不到，在 command 末尾加 `--as deepseek` 强制指定。
+
+只发送主机名和模型名，**不发送 key、token 或完整 URL**。同一会话识别过一次后会记住，后续事件即使不带线索也会归到同一个 Agent。
 
 ## 屏幕
 
@@ -43,44 +62,47 @@ python3 -m deskpet hooks codex
 | A | 切换页面：表情 → 时钟 → Agent 列表 → 宠物 |
 | B | 有提醒时：确认（停止闪烁 / 清掉 DONE）；没有提醒时：喂食 |
 
-| 状态 | 触发事件 | 表情 |
+| 状态 | 触发事件（各家同义事件已统一） | 表情 |
 |---|---|---|
-| THINKING | `UserPromptSubmit`、工具调用结束 | 眼睛往右上看 + 省略号 |
-| READING | `Read` `Grep` `Glob` `WebFetch` `WebSearch` … | 眼睛左右扫 |
-| EDITING | `Edit` `Write` `MultiEdit` `apply_patch` … | 半闭眼盯着看 + 光标 |
-| RUNNING | `Bash` `shell` `exec_command` … | 眼睛上下抖 + 转圈 |
-| NEEDS YOU | `PermissionRequest`、`Notification`(permission_prompt 等) | 橙色大眼 + 感叹号 + 屏幕边框闪 + LED 闪 |
-| DONE | `Stop` | ^ ^ 笑眼 + 星星，45 秒后回到 IDLE |
+| THINKING | `UserPromptSubmit` / `BeforeAgent`、工具调用结束 | 眼睛往右上看 + 省略号 |
+| READING | `Read` `Grep` `read_file` `ReadFile` `web_fetch` … | 眼睛左右扫 |
+| EDITING | `Edit` `Write` `apply_patch` `replace` `StrReplaceFile` … | 半闭眼盯着看 + 光标 |
+| RUNNING | `Bash` `shell` `run_shell_command` `Shell` `exec_command` … | 眼睛上下抖 + 转圈 |
+| NEEDS YOU | `PermissionRequest`、权限类 `Notification`（Gemini 的 `ToolPermission` 等） | 橙色大眼 + 感叹号 + 屏幕边框闪 + LED 闪 |
+| DONE | `Stop` / `AfterAgent` | ^ ^ 笑眼 + 星星，45 秒后回到 IDLE |
 | ERROR | `StopFailure` | × × + 汗滴 |
 | IDLE / OFFLINE | `SessionStart` / 没有会话 | 四处张望 / 闭眼打呼 |
 
 几条规则：
 
 - **多会话、多 Agent**：每个 Agent 显示它最紧急的会话，表情页显示最紧急的那个 Agent（NEEDS YOU > ERROR > 忙碌 > DONE > IDLE）。
-- **防误报**：`PermissionRequest` 要过 1.5 秒仍没被处理才提醒，自动批准的请求不会让它闪；`bypassPermissions` 等自动批准模式下直接忽略。
+- **防误报**：`PermissionRequest` 要过 1.5 秒仍没被处理才提醒，自动批准的请求不会让它闪。3 秒内重复的 `Stop` 只算一次，所以 Grok 的通知 hooks 和 Claude 格式 hooks 同时装也不会重复加经验。
 - **宠物养成**：完成任务加经验（基础 10 点，再按工具调用数和耗时加分），每 15 分钟掉 1 点精力，完成任务或按 B 喂食会补回来；精力低时会露出委屈脸。数据存在 `~/.deskpet/pet.json`。
-- **今日用量**：从 `~/.claude/projects/**/*.jsonl` 读取本地会话日志，统计 Claude 今天的 token 数，按 `message.id + requestId` 去重。不联网，不读任何凭证。`--no-usage` 可以关掉。
+- **今日用量**：从 `~/.claude/projects/**/*.jsonl` 统计 Claude Code 今天的 token 数，按 `message.id + requestId` 去重。不联网，不读凭证。`--no-usage` 可以关掉。其他 Agent 暂不统计用量。
 
 ## 隐私与安全
 
 - 只监听 `127.0.0.1`。hook 内容里有你的 prompt 和命令，除非确定局域网可信，不要改成 `--host 0.0.0.0`。
 - 屏幕上只显示文件名、截断后的命令（≤48 字符），不保存 prompt。
 - 带外站 `Origin` 头的 POST 会被拒绝，防止任意网页伪造状态。
-- 账号 token 永远不进设备。
+- `hook_bridge.py` 不输出任何内容，并且始终以 0 退出，不会阻塞或影响 Agent。
 
 ## 状态协议（v1）
 
-`GET /api/state` 返回一个快照，`GET /api/stream` 用 SSE 在状态变化时推送同样的内容。以后的固件通过 Wi-Fi 拉取，或者由守护进程经 BLE / 串口转发。
+`GET /api/state` 返回一个快照，`GET /api/stream` 用 SSE 在状态变化时推送同样的内容。`order` 是屏幕要显示的 Agent 顺序，`label` 和 `abbr` 由守护进程给出，以后新增 Agent 不用改固件。
 
 ```json
 {
   "v": 1,
-  "focus": "claude",
+  "mode": "custom",
+  "order": ["claude", "deepseek"],
+  "focus": "deepseek",
   "agents": {
-    "claude": {"state": "running", "detail": "npm test -- cart", "since": 1761480000.1,
-               "task_start": 1761479990.0, "tools": 4, "sessions": 1, "cwd": "shop-api",
-               "alert": false, "last": 1761480000.1},
-    "codex":  {"state": "offline", "...": "..."}
+    "claude":   {"state": "idle", "label": "CLAUDE", "abbr": "CL", "...": "..."},
+    "deepseek": {"state": "running", "label": "DEEPSEEK", "abbr": "DS",
+                 "detail": "npm test -- cart", "since": 1761480000.1,
+                 "task_start": 1761479990.0, "tools": 4, "sessions": 1,
+                 "cwd": "shop-api", "alert": false, "last": 1761480000.1}
   },
   "pet":   {"level": 2, "xp": 160, "xp_level": 100, "xp_next": 300, "energy": 84,
             "mood": "happy", "tasks_today": 5, "tools_today": 30, "errors_today": 0,
@@ -90,20 +112,40 @@ python3 -m deskpet hooks codex
 }
 ```
 
-其他接口：`POST /hook/<agent>`（hook 原文，可加 `?event=名字`），`POST /api/button {"button":"B"}`，`POST /api/demo`。
+其他接口：
+
+| 接口 | 作用 |
+|---|---|
+| `POST /hook/<agent>` | hook 原文，可加 `?event=名字` |
+| `GET` / `POST /api/config` | 读取 / 修改模式和 Agent 列表 |
+| `GET /api/agents` | 每个 Agent 的接入配置 |
+| `POST /api/button {"button":"B"}` | 模拟 B 键 |
+| `POST /api/demo` | 播放演示 |
 
 ## 目录
 
 ```
+deskpet/agents.py   支持的 Agent、身份识别、各家 hooks 配置生成
 deskpet/core.py     hook 事件 → 每个 Agent 的显示状态
 deskpet/pet.py      经验、等级、精力
 deskpet/usage.py    今日 Claude token 统计
-deskpet/server.py   HTTP 守护进程 + SSE
-deskpet/demo.py     演示脚本（走真实的 hook 处理流程）
-hooks/hook_bridge.py  command hook 转发器
+deskpet/server.py   HTTP 守护进程 + SSE + 模式配置
+deskpet/demo.py     演示脚本（走真实的 hook 处理流程，按所选 Agent 分配角色）
+hooks/hook_bridge.py  command hook 转发器（附带身份线索）
 web/                网页模拟器（320×240 canvas）
 tests/              python3 -m unittest discover -s tests
 ```
+
+## 资料来源
+
+- Claude Code hooks：https://code.claude.com/docs/en/hooks
+- Gemini CLI hooks：google-gemini/gemini-cli 仓库 `docs/hooks/reference.md`
+- Qwen Code hooks：QwenLM/qwen-code 仓库 `docs/users/features/hooks.md`
+- Kimi Code hooks：MoonshotAI/kimi-code 仓库 `docs/en/customization/hooks.md`
+- Grok Build：xai-org/grok-build 仓库的配置文档（通知 hooks、读取 `~/.claude/settings.json`）
+- DeepSeek 接 Claude Code：https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/
+- Codex hooks：第三方资料（zxkill/agentface32、codex.danielvaughan.com），未读到 OpenAI 官方文档
+- Muse Code hooks：第三方资料（meta-models/muse-code-sdk issue、Arcjet 文档），未读到 dev.meta.ai 官方配置页
 
 ## 下一步
 

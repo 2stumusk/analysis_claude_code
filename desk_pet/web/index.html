@@ -30,6 +30,22 @@
     </header>
 
     <div class="group">
+      <h2>显示哪些 Agent</h2>
+      <div class="seg" role="radiogroup" aria-label="模式">
+        <button class="seg-btn" data-mode="custom" role="radio">自选</button>
+        <button class="seg-btn" data-mode="auto" role="radio">自动（谁在线显示谁）</button>
+      </div>
+      <div class="row presets" id="presets"></div>
+      <div class="chips" id="pick"></div>
+      <p class="note" id="pickNote"></p>
+    </div>
+
+    <details class="group" id="setup">
+      <summary>接入方式（每个 Agent 的 hooks 配置）</summary>
+      <div id="setupList" class="setup"></div>
+    </details>
+
+    <div class="group">
       <h2>演示</h2>
       <div class="row">
         <button id="demo">播放演示会话</button>
