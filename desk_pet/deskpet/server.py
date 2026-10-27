@@ -45,6 +45,7 @@ class App:
         self.usage_interval = usage_interval
         self.demo_stop = None
         self.routes = {}  # (endpoint, session) -> agent that really sent it
+        self.device = None  # set by device.SerialLink while a board is connected
         self.config_path = config_path
         self.config = {"mode": "custom", "agents": list(registry.DEFAULT_AGENTS)}
         if config_path and os.path.exists(config_path):
@@ -77,6 +78,10 @@ class App:
                 pass
         self.notify()
         return dict(self.config)
+
+    def set_device(self, info):
+        self.device = info
+        self.notify()
 
     def shown_agents(self):
         if self.config["mode"] == "auto":
@@ -135,6 +140,7 @@ class App:
             entry["label"], entry["abbr"] = info["label"], info["abbr"]
         snap["order"] = shown
         snap["mode"] = self.config["mode"]
+        snap["device"] = self.device
         snap["v"] = PROTOCOL_VERSION
         snap["pet"] = self.pet.snapshot()
         snap["usage"] = {"claude": self.usage.snapshot()} if self.usage else None

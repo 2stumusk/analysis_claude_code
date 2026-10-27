@@ -2,7 +2,7 @@
 
 一个放在桌上的小屏幕宠物：显示 Claude Code、Codex、Gemini、Qwen、Kimi、DeepSeek、Grok、Muse 这些 Agent 正在做什么、什么时候需要你，空闲时当时钟用，Agent 每完成一个任务它就成长一点。
 
-当前阶段：**电脑端守护进程 + 网页模拟器**（还没有硬件）。模拟器画的就是未来 320×240 屏幕上的内容，读的也是设备将来收到的同一份状态 JSON，硬件到手后只需要写固件把它画出来。
+当前阶段：**电脑端守护进程 + 网页模拟器 + ESP32 固件**。固件支持 M5Stack Basic / Core2 和 CYD 三种板子，已编译通过，但还没在真机上跑过，详见 [firmware/README.md](firmware/README.md)。板子通过 USB 串口连接：`python3 -m deskpet --serial auto`。
 
 ## 快速开始
 
@@ -131,8 +131,10 @@ deskpet/pet.py      经验、等级、精力
 deskpet/usage.py    今日 Claude token 统计
 deskpet/server.py   HTTP 守护进程 + SSE + 模式配置
 deskpet/demo.py     演示脚本（走真实的 hook 处理流程，按所选 Agent 分配角色）
+deskpet/device.py   USB 串口：给固件发状态帧、自动找设备、接收按键
 hooks/hook_bridge.py  command hook 转发器（附带身份线索）
 web/                网页模拟器（320×240 canvas）
+firmware/           ESP32 固件（PlatformIO）和电脑端界面预览工具
 tests/              python3 -m unittest discover -s tests
 ```
 
@@ -149,7 +151,7 @@ tests/              python3 -m unittest discover -s tests
 
 ## 下一步
 
-1. 固件：ESP32-S3 + 2 寸屏，用 LVGL 按同一协议画表情、时钟和列表。
+1. 真机实测固件（按键、声音、刷新率、CYD 屏幕方向），补上 Core2 的声音。
 2. 用设备按键批准 / 拒绝权限：Claude Code 的 `PermissionRequest` hook 可以返回决定。这个功能涉及安全，要做成显式开启。
 3. 兼容 [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy) 的 BLE 协议，让设备也能连 Claude 桌面版。
 4. 原创角色和 GIF 皮肤包。

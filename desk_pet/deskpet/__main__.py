@@ -3,6 +3,7 @@
   python -m deskpet                          start the daemon and web simulator
   python -m deskpet --demo                   same, and play a demo session
   python -m deskpet --agents claude,kimi     choose which agents the screen shows
+  python -m deskpet --serial auto            also drive a USB-connected device
   python -m deskpet hooks <agent>            print hook config for one agent
   python -m deskpet agents                   list supported agents
 """
@@ -12,6 +13,7 @@ import os
 import sys
 
 from . import agents as registry
+from .device import SerialLink
 from .server import serve
 
 HOME = os.path.join(os.path.expanduser("~"), ".deskpet")
@@ -31,6 +33,8 @@ def main(argv=None):
     p.add_argument("--agents", help="comma-separated agents to show, or a preset: "
                    + ", ".join(registry.PRESETS))
     p.add_argument("--demo", action="store_true", help="play a demo session on start")
+    p.add_argument("--serial", metavar="PORT", help="drive a deskpet device over USB: a port such as "
+                   "/dev/ttyUSB0 or COM3, or 'auto' to find it")
     p.add_argument("--no-usage", action="store_true", help="do not read ~/.claude/projects")
     p.add_argument("--state-file", default=os.path.join(HOME, "pet.json"))
     p.add_argument("--config-file", default=os.path.join(HOME, "config.json"))
@@ -61,6 +65,8 @@ def main(argv=None):
         "127.0.0.1" if args.host in ("0.0.0.0", "") else args.host, args.port))
     print("         showing: %s (%s mode)" % (", ".join(app.config["agents"]), app.config["mode"]))
     print("         hook config: python -m deskpet hooks <agent>")
+    if args.serial:
+        SerialLink(app, args.serial).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

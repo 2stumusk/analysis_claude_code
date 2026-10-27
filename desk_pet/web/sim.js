@@ -577,13 +577,17 @@
   function setConn(ok) {
     connected = ok;
     connEl.className = "conn " + (ok ? "ok" : "bad");
-    connEl.textContent = ok ? `已连接守护进程 ${location.host}` : "未连接守护进程：请运行 python -m deskpet";
+    if (!ok) { connEl.textContent = "未连接守护进程：请运行 python -m deskpet"; return; }
+    const dev = snap && snap.device;
+    connEl.textContent = `已连接守护进程 ${location.host}` +
+      (dev ? ` · USB 设备 ${dev.board || "未知板子"}（${dev.port}）` : "");
   }
 
   function apply(next) {
     onTransitions(next);
     snap = next;
     renderPanel();
+    if (connected) setConn(true);
   }
 
   function connect() {
