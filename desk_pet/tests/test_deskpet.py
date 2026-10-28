@@ -222,7 +222,9 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(snap["order"], ["gemini", "grok"])
             self.assertEqual(snap["focus"], "grok" if snap["agents"]["grok"]["last"] > snap["agents"]["gemini"]["last"] else "gemini")
             again = App(usage=False, config_path=path)
-            self.assertEqual(again.config, {"mode": "auto", "agents": ["qwen", "kimi"]})
+            self.assertEqual(again.config, {"mode": "auto", "agents": ["qwen", "kimi"],
+                                            "pages": ["face", "clock", "weather", "agents", "stats"],
+                                            "city": None})
 
     def test_hidden_agents_still_tracked(self):
         app = App(usage=False)

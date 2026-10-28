@@ -18,7 +18,7 @@
     thinking: "THINK", reading: "READ", editing: "EDIT", running: "RUN",
     waiting: "WAIT", done: "DONE", error: "ERR", idle: "IDLE", offline: "OFF",
   };
-  const VIEWS = ["face", "clock", "agents", "stats"];
+  const VIEWS = ["face", "clock", "weather", "agents", "stats"];
   const BG = "#0b0d10", FG = "#e8e6e3", DIM = "#7a808a", FAINT = "#262a31";
 
   const canvas = document.getElementById("screen");
@@ -27,7 +27,7 @@
 
   let snap = null;          // latest state from the daemon
   let connected = false;
-  let view = 0;
+  let view = "face";
   let preview = null;       // forced state for face preview
   let toast = null;         // {text, until}
   let soundOn = false;
@@ -379,6 +379,11 @@
     const date = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
     text(date.toUpperCase(), W / 2, 132, { size: 13, weight: 600, color: DIM, align: "center" });
 
+    const w = snap && snap.weather;
+    if (connected && w && (w.status === "ok" || w.status === "stale")) {
+      text(`${w.city}  ${w.temp}C  ${w.text}`, W / 2, 154, { size: 11, color: DIM, align: "center" });
+    }
+
     // mini face + agent pills
     face(52, 190, 0.42, faceState(), t, snap ? snap.pet.mood : "ok");
     const names = agentList();
@@ -495,19 +500,130 @@
     }
   }
 
-  const DRAW = { face: viewFace, clock: viewClock, agents: viewAgents, stats: viewStats };
+  // ---------- weather ----------
+  const SUN = "#ffd166", MOON = "#e8e6e3", CLOUD = "#d7dbe0", CLOUD_DARK = "#8a929e", RAIN = "#7cc4ff";
+
+  function circle(x, y, r, color) {
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, Math.max(0.5, r), 0, Math.PI * 2); ctx.fill();
+  }
+
+  function cloudShape(cx, cy, s, color) {
+    circle(cx - 14 * s, cy + 4 * s, 12 * s, color);
+    circle(cx + 2 * s, cy - 6 * s, 16 * s, color);
+    circle(cx + 16 * s, cy + 4 * s, 11 * s, color);
+    rrect(cx - 26 * s, cy + 2 * s, 53 * s, 14 * s, 7 * s); ctx.fillStyle = color; ctx.fill();
+  }
+
+  function sunShape(cx, cy, s, spin) {
+    circle(cx, cy, 15 * s, SUN);
+    if (s < 0.5) return;
+    ctx.strokeStyle = SUN; ctx.lineWidth = 3.6 * s; ctx.lineCap = "round";
+    for (let i = 0; i < 8; i++) {
+      const a = spin + (i * Math.PI) / 4;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 21 * s, cy + Math.sin(a) * 21 * s);
+      ctx.lineTo(cx + Math.cos(a) * 28 * s, cy + Math.sin(a) * 28 * s);
+      ctx.stroke();
+    }
+  }
+
+  function moonShape(cx, cy, s) {
+    circle(cx, cy, 15 * s, MOON);
+    circle(cx + 8 * s, cy - 6 * s, 13 * s, BG);
+  }
+
+  // Same drawing as weatherIcon() in firmware/src/ui.cpp.
+  function weatherIcon(cx, cy, s, sky, day, t) {
+    const anim = s >= 0.8 ? t : 0;
+    if (sky === "clear") {
+      if (day) sunShape(cx, cy, s * 1.15, anim * 0.4); else moonShape(cx, cy, s * 1.2);
+    } else if (sky === "partly") {
+      if (day) sunShape(cx - 12 * s, cy - 10 * s, s * 0.75, anim * 0.4); else moonShape(cx - 12 * s, cy - 10 * s, s * 0.8);
+      cloudShape(cx + 6 * s, cy + 6 * s, s * 0.85, CLOUD);
+    } else if (sky === "fog") {
+      for (let i = 0; i < 4; i++) {
+        rrect(cx - 26 * s + (i % 2 ? 6 : -6) * s, cy + (-14 + i * 9) * s, 52 * s, 5 * s + 1, 2.5 * s);
+        ctx.fillStyle = CLOUD; ctx.fill();
+      }
+    } else if (sky === "rain" || sky === "drizzle" || sky === "snow") {
+      cloudShape(cx, cy - 8 * s, s, sky === "snow" ? CLOUD : CLOUD_DARK);
+      const fall = s >= 0.8 ? (t * 1.2) % 1 : 0.4;
+      for (let i = 0; i < 3; i++) {
+        const x = cx + (-14 + i * 14) * s, y = cy + (16 + fall * 8 + (i % 2) * 5) * s;
+        if (sky === "rain") {
+          ctx.strokeStyle = RAIN; ctx.lineWidth = 3.2 * s + 0.8; ctx.lineCap = "round";
+          ctx.beginPath(); ctx.moveTo(x + 3 * s, y - 5 * s); ctx.lineTo(x - 1 * s, y + 4 * s); ctx.stroke();
+        } else {
+          circle(x, y, (sky === "snow" ? 3 : 2) * s + 1, sky === "snow" ? "#ffffff" : RAIN);
+        }
+      }
+    } else if (sky === "thunder") {
+      cloudShape(cx, cy - 8 * s, s, CLOUD_DARK);
+      ctx.fillStyle = SUN;
+      ctx.beginPath();
+      ctx.moveTo(cx + 2 * s, cy + 4 * s); ctx.lineTo(cx - 8 * s, cy + 20 * s); ctx.lineTo(cx + 1 * s, cy + 20 * s);
+      ctx.closePath(); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx - 1 * s, cy + 17 * s); ctx.lineTo(cx + 8 * s, cy + 17 * s); ctx.lineTo(cx - 4 * s, cy + 34 * s);
+      ctx.closePath(); ctx.fill();
+    } else {  // cloudy
+      cloudShape(cx + 10 * s, cy - 8 * s, s * 0.7, CLOUD_DARK);
+      cloudShape(cx - 2 * s, cy + 4 * s, s, CLOUD);
+    }
+  }
+
+  function viewWeather(t) {
+    const w = snap && snap.weather;
+    const ready = connected && w && (w.status === "ok" || w.status === "stale");
+    if (!ready) {
+      weatherIcon(W / 2, 78, 1, "partly", true, t);
+      const title = !connected ? "not connected" : !w ? "no city set" : w.status === "error" ? "weather unavailable" : "loading weather...";
+      text(title, W / 2, 150, { size: 14, weight: 700, align: "center" });
+      const sub = connected && !w ? "set a city in the panel →" : (w && w.query) || "";
+      text(sub, W / 2, 172, { size: 11, color: DIM, align: "center" });
+      return;
+    }
+    text(w.city, 12, 22, { size: 14, weight: 700 });
+    const age = Math.floor((w.age || 0) / 60);
+    const ageText = w.sample ? "sample data" : age < 1 ? "just updated" : `${w.status === "stale" ? "stale: " : ""}updated ${age} min ago`;
+    text(ageText, W - 12, 21, { size: 11, color: w.status === "stale" ? COLORS.running : DIM, align: "right" });
+    weatherIcon(70, 84, 1.25, w.kind, w.day, t);
+    text(String(w.temp), 140, 104, { size: 60, weight: 400, font: SANS });
+    ctx.font = `400 60px ${SANS}`;
+    const tw = ctx.measureText(String(w.temp)).width;
+    circle(140 + tw + 9, 58, 6, FG); circle(140 + tw + 9, 58, 3, BG);
+    text("C", 140 + tw + 18, 72, { size: 16 });
+    text(w.text, 140, 128, { size: 14, weight: 700 });
+    if (w.hi != null && w.lo != null) text(`H ${w.hi}  L ${w.lo}`, 140, 148, { size: 11, color: DIM });
+    text(`feels ${w.feels}  hum ${w.humidity}%  wind ${w.wind}` + (w.pop >= 0 ? `  rain ${w.pop}%` : ""), 12, 170, { size: 11, color: DIM });
+    const colW = (W - 20) / 6;
+    (w.hours || []).slice(0, 6).forEach((h, i) => {
+      const x = 10 + colW * i + colW / 2;
+      text(`${pad(h.h)}:00`, x, 190, { size: 9, color: DIM, align: "center" });
+      weatherIcon(x, 204, 0.32, h.k, h.d, t);
+      text(String(h.t), x, 228, { size: 11, align: "center" });
+    });
+  }
+
+  function enabledViews() {
+    const pages = snap && snap.pages ? VIEWS.filter((v) => snap.pages.includes(v)) : VIEWS;
+    return pages.length ? pages : VIEWS;
+  }
+
+  const DRAW = { face: viewFace, clock: viewClock, weather: viewWeather, agents: viewAgents, stats: viewStats };
 
   function frame() {
     const t = now();
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
-    const v = VIEWS[view];
-    DRAW[v](t);
-    if (v === "face") alertRing(t);
-    // page dots
-    VIEWS.forEach((_, i) => {
-      ctx.fillStyle = i === view ? FG : FAINT;
-      ctx.beginPath(); ctx.arc(W / 2 - 18 + i * 12, H - 4, 2, 0, Math.PI * 2); ctx.fill();
+    const pages = enabledViews();
+    if (!pages.includes(view)) view = pages[0];
+    DRAW[view](t);
+    if (view === "face") alertRing(t);
+    // one dot per enabled page
+    pages.forEach((p, i) => {
+      ctx.fillStyle = p === view ? FG : FAINT;
+      ctx.beginPath(); ctx.arc(W / 2 - (pages.length - 1) * 6 + i * 12, H - 4, 2, 0, Math.PI * 2); ctx.fill();
     });
     drawToast(t);
     updateLed(t);
@@ -569,7 +685,11 @@
       prev.alerts[name] = a.alert;
       prev.states[name] = a.state;
     }
-    if (jump && !preview) view = 0;
+    if (jump && !preview) {
+      const pages = enabledViews();
+      if (pages.includes("face")) view = "face";
+      else if (pages.includes("agents")) view = "agents";
+    }
   }
 
   // ---------- data ----------
@@ -614,7 +734,11 @@
   function press(btn, el) {
     el.classList.add("pressed"); setTimeout(() => el.classList.remove("pressed"), 120);
     ensureAudio();
-    if (btn === "A") { view = (view + 1) % VIEWS.length; return; }
+    if (btn === "A") {
+      const pages = enabledViews();
+      view = pages[(pages.indexOf(view) + 1) % pages.length];
+      return;
+    }
     post("api/button", { button: "B" }).then((r) => {
       toast = { text: r.action === "ack" ? "OK, got it" : "yum! +energy", until: now() + 1.4 };
     }).catch(() => { toast = { text: "no daemon", until: now() + 1.4 }; });
@@ -636,7 +760,7 @@
   });
 
   document.getElementById("demo").addEventListener("click", () => {
-    ensureAudio(); preview = null; renderChips(); view = 0;
+    ensureAudio(); preview = null; renderChips(); view = "face";
     post("api/demo", {}).catch(() => setConn(false));
   });
   const soundBtn = document.getElementById("sound");
@@ -654,7 +778,7 @@
       const b = document.createElement("button");
       b.className = "chip" + (preview === st ? " active" : "");
       b.textContent = st ? LABELS[st].toLowerCase() : "实时";
-      b.addEventListener("click", () => { preview = st; view = 0; renderChips(); });
+      b.addEventListener("click", () => { preview = st; view = "face"; renderChips(); });
       chipsEl.appendChild(b);
     }
   }
@@ -675,6 +799,7 @@
       agentsEl.appendChild(row);
     }
     rawEl.textContent = JSON.stringify(snap, null, 2);
+    renderWeatherNote();
   }
 
   // ---------- agent selection ----------
@@ -690,13 +815,54 @@
         fetch("api/config", { cache: "no-store" }).then((r) => r.json()),
         fetch("api/agents", { cache: "no-store" }).then((r) => r.json()),
       ]);
-      renderPicker(); renderSetup();
+      renderPicker(); renderPages(); renderSetup();
     } catch { /* daemon offline: the connection line already says so */ }
   }
 
   async function saveConfig(patch) {
     config = Object.assign(config, await post("api/config", patch));
     renderPicker();
+    renderPages();
+  }
+
+  const PAGE_NAMES = { face: "表情", clock: "时钟", weather: "天气", agents: "Agent 列表", stats: "宠物" };
+  const pagesEl = document.getElementById("pages"), cityInput = document.getElementById("city");
+  const weatherNote = document.getElementById("weatherNote");
+
+  function renderPages() {
+    pagesEl.innerHTML = "";
+    for (const page of config.all_pages || VIEWS) {
+      const on = config.pages.includes(page);
+      const b = document.createElement("button");
+      b.className = "chip" + (on ? " on" : "");
+      b.textContent = PAGE_NAMES[page] || page;
+      b.setAttribute("aria-pressed", String(on));
+      b.onclick = () => {
+        const next = on ? config.pages.filter((p) => p !== page) : config.pages.concat(page);
+        if (next.length) saveConfig({ pages: next });
+      };
+      pagesEl.appendChild(b);
+    }
+    if (document.activeElement !== cityInput) cityInput.value = config.city || "";
+  }
+
+  document.getElementById("cityForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    saveConfig({ city: cityInput.value.trim() });
+    cityInput.blur();
+  });
+
+  function renderWeatherNote() {
+    const w = snap && snap.weather;
+    if (!w) {
+      weatherNote.textContent = "未设置城市，天气页显示提示。数据来自 Open-Meteo，免费接口仅限非商业用途。";
+      return;
+    }
+    const where = w.city ? `${w.query || w.city}（${w.city}）` : w.query;
+    const states = { ok: w.sample ? "样例数据" : "已更新", stale: "数据过期，正在重试", loading: "正在获取", error: "获取失败" };
+    weatherNote.textContent = `${where}：${states[w.status] || w.status}` +
+      (w.text_zh ? ` · ${w.text_zh} ${w.temp}°C` : "") + (w.error ? ` · ${w.error}` : "") +
+      " · 数据来自 Open-Meteo（免费接口仅限非商业用途）";
   }
 
   function renderPicker() {

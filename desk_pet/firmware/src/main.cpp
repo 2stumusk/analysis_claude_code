@@ -202,7 +202,7 @@ void linkPoll() {
 void onButton(int b) {
   float now = nowSeconds();
   if (b == 1) {
-    ui.nextView();
+    ui.nextView(model);
     play(Sound::Click);
   } else if (b == 2) {
     Serial.println("{\"btn\":\"B\"}");

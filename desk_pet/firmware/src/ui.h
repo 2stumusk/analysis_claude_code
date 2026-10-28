@@ -12,14 +12,15 @@ namespace pet {
 
 enum class Sound : uint8_t { None, Waiting, Done, Error, Click };
 
-enum class View : uint8_t { Face, Clock, Agents, Stats, Count };
+// Same order as the PageBit flags in model.h.
+enum class View : uint8_t { Face, Clock, Weather, Agents, Stats, Count };
 
 class Ui {
  public:
   void update(const Model& m, float now);
   void draw(Gfx& g, const Model& m, float now) const;
 
-  void nextView();
+  void nextView(const Model& m);  // next page the daemon has enabled
   void setView(View v) { view_ = v; }
   View view() const { return view_; }
   void showToast(const char* text, float now);
@@ -50,6 +51,7 @@ class Ui {
   void viewAgents(Gfx& g, const Model& m, float now) const;
   void agentRows(Gfx& g, const Model& m, float now) const;
   void viewStats(Gfx& g, const Model& m, float now) const;
+  void viewWeather(Gfx& g, const Model& m, float now) const;
 
   View view_ = View::Face;
   State preview_ = State::Count;

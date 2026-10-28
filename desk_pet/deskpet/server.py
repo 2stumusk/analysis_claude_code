@@ -5,7 +5,7 @@ Routes
   GET  /api/state      current snapshot
   GET  /api/stream     the same snapshot as Server-Sent Events, pushed on change
   POST /api/button     {"button": "B"} acknowledge alerts, or feed the pet
-  GET  /api/config     which agents the screen shows; POST to change it
+  GET  /api/config     agents, pages and weather city; POST to change them
   GET  /api/agents     every supported agent with its hook config
   POST /api/demo       play a scripted demo session
   GET  /               web simulator
@@ -24,6 +24,7 @@ from . import demo
 from .core import Tracker
 from .pet import Pet
 from .usage import ClaudeUsage
+from .weather import OpenMeteo, WeatherService
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -33,11 +34,16 @@ AGENT_RE = re.compile(r"^/hook/([a-z0-9_-]{1,24})$")
 MAX_BODY = 2 * 1024 * 1024
 PROTOCOL_VERSION = 1
 MAX_ROUTES = 1000
+PAGES = ["face", "clock", "weather", "agents", "stats"]  # button A cycles through these
+
+
+def open_meteo_service(city, on_change):
+    return WeatherService(OpenMeteo(city), city, on_change=on_change).start()
 
 
 class App:
     def __init__(self, pet_path=None, usage=True, usage_interval=60, config_path=None,
-                 agents=None):
+                 agents=None, weather_factory=open_meteo_service):
         self.changed = threading.Condition()
         self.pet = Pet(pet_path)
         self.tracker = Tracker(on_task_done=self._task_done)
@@ -47,7 +53,10 @@ class App:
         self.routes = {}  # (endpoint, session) -> agent that really sent it
         self.device = None  # set by device.SerialLink while a board is connected
         self.config_path = config_path
-        self.config = {"mode": "custom", "agents": list(registry.DEFAULT_AGENTS)}
+        self.config = {"mode": "custom", "agents": list(registry.DEFAULT_AGENTS),
+                       "pages": list(PAGES), "city": None}
+        self.weather_factory = weather_factory
+        self.weather = None
         if config_path and os.path.exists(config_path):
             try:
                 with open(config_path, encoding="utf-8") as f:
@@ -56,6 +65,7 @@ class App:
                 pass
         if agents:
             self.set_config({"mode": "custom", "agents": agents})
+        self._restart_weather()
 
     def _apply_config(self, cfg):
         if not isinstance(cfg, dict):
@@ -66,9 +76,25 @@ class App:
             chosen = registry.normalize_list(cfg["agents"])
             if chosen:
                 self.config["agents"] = chosen
+        if isinstance(cfg.get("pages"), list):
+            pages = [p for p in PAGES if p in cfg["pages"]]
+            if pages:
+                self.config["pages"] = pages
+        if "city" in cfg and (cfg["city"] is None or isinstance(cfg["city"], str)):
+            self.config["city"] = (cfg["city"] or "").strip()[:60] or None
+
+    def _restart_weather(self):
+        if self.weather is not None:
+            self.weather.stop.set()
+            self.weather = None
+        if self.config["city"] and self.weather_factory:
+            self.weather = self.weather_factory(self.config["city"], self.notify)
 
     def set_config(self, cfg):
+        city = self.config["city"]
         self._apply_config(cfg)
+        if self.config["city"] != city:
+            self._restart_weather()
         if self.config_path:
             try:
                 os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
@@ -141,6 +167,8 @@ class App:
         snap["order"] = shown
         snap["mode"] = self.config["mode"]
         snap["device"] = self.device
+        snap["pages"] = list(self.config["pages"])
+        snap["weather"] = self.weather.snapshot() if self.weather else None
         snap["v"] = PROTOCOL_VERSION
         snap["pet"] = self.pet.snapshot()
         snap["usage"] = {"claude": self.usage.snapshot()} if self.usage else None
@@ -186,7 +214,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/stream":
             return self._stream()
         if path == "/api/config":
-            return self._json(200, dict(self.app.config, presets=registry.PRESETS))
+            return self._json(200, dict(self.app.config, presets=registry.PRESETS, all_pages=PAGES))
         if path == "/api/agents":
             port = self.server.server_address[1]
             out = []

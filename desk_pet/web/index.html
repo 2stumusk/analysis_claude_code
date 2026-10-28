@@ -40,6 +40,17 @@
       <p class="note" id="pickNote"></p>
     </div>
 
+    <div class="group">
+      <h2>页面与天气 <small>按 A 键在勾选的页面间切换</small></h2>
+      <div class="chips" id="pages"></div>
+      <form class="row city" id="cityForm">
+        <label for="city" class="visually-hidden">天气城市</label>
+        <input id="city" name="city" placeholder="天气城市，如 无锡" autocomplete="off">
+        <button type="submit">保存</button>
+      </form>
+      <p class="note" id="weatherNote"></p>
+    </div>
+
     <details class="group" id="setup">
       <summary>接入方式（每个 Agent 的 hooks 配置）</summary>
       <div id="setupList" class="setup"></div>

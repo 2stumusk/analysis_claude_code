@@ -27,6 +27,14 @@ State parseState(const char* s) {
   return State::Idle;
 }
 
+Sky parseSky(const char* s) {
+  static const char* kSky[] = {"clear", "partly", "cloudy", "fog", "drizzle", "rain", "snow", "thunder"};
+  for (int i = 0; i < 8; i++) {
+    if (strcmp(s, kSky[i]) == 0) return (Sky)i;
+  }
+  return Sky::Cloudy;
+}
+
 const char* stateLabel(State s) { return kNames[(int)s].label; }
 const char* stateShort(State s) { return kNames[(int)s].shortLabel; }
 

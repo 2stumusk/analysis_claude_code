@@ -1,5 +1,6 @@
 #include "frame.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -285,6 +286,59 @@ bool parseFrame(const char* line, Model& m, float now) {
   if (next.has_usage) {
     next.usage_out = (int64_t)doc->num(u, "o", 0);
     next.usage_total = (int64_t)doc->num(u, "t", 0);
+  }
+  // Pages: letters f c w a s, in any order; missing = all.
+  char pages[8];
+  doc->str(root, "pg", pages, sizeof(pages));
+  next.pages = pages[0] ? 0 : kAllPages;
+  for (const char* c = pages; *c; c++) {
+    const char* letters = "fcwas";
+    const char* at = strchr(letters, *c);
+    if (at) next.pages |= (uint8_t)(1 << (at - letters));
+  }
+  if (!next.pages) next.pages = kAllPages;
+
+  WeatherInfo& w = next.weather;
+  w = WeatherInfo();
+  int wn = doc->get(root, "w");
+  if (wn >= 0 && doc->at(wn).type == T::Obj) {
+    char st[12], sky[12];
+    doc->str(wn, "st", st, sizeof(st));
+    w.status = !strcmp(st, "ok")      ? WeatherInfo::Status::Ok
+               : !strcmp(st, "stale") ? WeatherInfo::Status::Stale
+               : !strcmp(st, "error") ? WeatherInfo::Status::Error
+                                      : WeatherInfo::Status::Loading;
+    doc->str(wn, "c", w.city, sizeof(w.city));
+    doc->str(wn, "tx", w.text, sizeof(w.text));
+    doc->str(wn, "k", sky, sizeof(sky));
+    w.sky = parseSky(sky);
+    w.day = doc->num(wn, "dy", 1) != 0;
+    w.sample = doc->num(wn, "sm", 0) != 0;
+    w.temp = (int16_t)doc->num(wn, "t", 0);
+    w.feels = (int16_t)doc->num(wn, "fl", 0);
+    w.hi = (int16_t)doc->num(wn, "hi", -99);
+    w.lo = (int16_t)doc->num(wn, "lo", -99);
+    w.wind = (int16_t)doc->num(wn, "ws", 0);
+    w.humidity = (int8_t)doc->num(wn, "hu", 0);
+    w.pop = (int8_t)doc->num(wn, "p", -1);
+    w.age_min = (int)doc->num(wn, "ag", 0);
+    int hs = doc->get(wn, "h");
+    if (hs >= 0 && doc->at(hs).type == T::Arr) {
+      for (int h = doc->at(hs).child; h >= 0 && w.hours < 6; h = doc->at(h).next) {
+        // [hour, temp, sky, pop, day]
+        int f[5] = {-1, -1, -1, -1, -1}, i = 0;
+        for (int v = doc->at(h).child; v >= 0 && i < 5; v = doc->at(v).next) f[i++] = v;
+        if (i < 5 || doc->at(f[2]).type != T::Str) continue;
+        HourForecast& hf = w.hour[w.hours++];
+        char hsky[12];
+        snprintf(hsky, sizeof(hsky), "%.*s", doc->at(f[2]).len < 11 ? doc->at(f[2]).len : 11, doc->at(f[2]).p);
+        hf.hour = (int8_t)strtol(doc->at(f[0]).p, nullptr, 10);
+        hf.temp = (int16_t)strtod(doc->at(f[1]).p, nullptr);
+        hf.sky = parseSky(hsky);
+        hf.pop = (int8_t)strtol(doc->at(f[3]).p, nullptr, 10);
+        hf.day = doc->at(f[4]).p[0] != '0';
+      }
+    }
   }
   next.connected = true;
   next.rx_time = now;

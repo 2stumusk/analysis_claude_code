@@ -20,7 +20,7 @@
 
 | 键 | 作用 |
 |---|---|
-| A | 切换页面：表情 → 时钟 → Agent 列表 → 宠物 |
+| A | 切换页面：表情 → 时钟 → 天气 → Agent 列表 → 宠物（只在电脑端勾选的页面之间切换） |
 | B | 有提醒时确认，没有提醒时喂食（发给守护进程处理，和网页上的 B 一样） |
 | C / 长按 | 开关声音，设置会记住 |
 
@@ -50,7 +50,10 @@ python3 -m deskpet --serial auto        # 自动找到设备；也可以写 /dev
 {"v":1,"t":1793059190,"tz":28800,"f":0,
  "a":[{"id":"claude","l":"CLAUDE","b":"CL","s":"running","d":"npm test","c":"shop-api","e":12,"n":4,"k":1,"x":0}],
  "p":{"lv":2,"xi":30,"xs":200,"en":84,"md":"happy","tk":5,"tl":30,"er":0,"lu":-1,"fd":-1},
- "u":{"o":1234,"t":5678}}
+ "u":{"o":1234,"t":5678},
+ "pg":"fcw",
+ "w":{"st":"ok","c":"Wuxi","tx":"Light rain","k":"rain","dy":1,"t":17,"fl":16,"hu":82,"ws":14,
+      "hi":21,"lo":14,"p":70,"ag":5,"sm":0,"h":[[15,19,"partly",40,1]]}}
 ```
 
 - 文字只发可打印 ASCII，因为设备字体只有这些字符，中文会变成 `?`。
@@ -60,6 +63,8 @@ python3 -m deskpet --serial auto        # 自动找到设备；也可以写 /dev
 **设备 → 电脑**：
 - 开机后每 2 秒发一次 `{"hello":"deskpet","fw":"0.1.0","board":"m5stack-basic"}`，直到收到第一帧。
 - 按下 B 时发 `{"btn":"B"}`。
+
+`pg` 是启用的页面（f 表情、c 时钟、w 天气、a 列表、s 宠物）。`w` 是天气：没设城市时为 `null`；`k` 是图标类型，取值有 clear、partly、cloudy、fog、drizzle、rain、snow、thunder；`h` 是接下来的逐 2 小时预报。
 
 解析器在 `src/frame.cpp`，是固件自带的约 150 行小 JSON 解析器，不依赖 ArduinoJson，所以在电脑上也能跑测试。
 
@@ -88,10 +93,11 @@ python3 tools/preview.py --lgfx /path/to/LovyanGFX --out preview/
 - 场景帧由守护进程的 `deskpet/device.py` 真实生成。
 - 记录下来的绘图指令用 Pillow 画出来。文字按 LovyanGFX 字体文件里的字形数据逐像素绘制，字形和宽度与设备一致。图形用 Pillow 近似绘制，圆角和抗锯齿会和真机略有出入。
 
-输出 17 张 PNG 外加一张总览图 `sheet.png`，覆盖：
+输出 24 张 PNG 外加一张总览图 `sheet.png`，覆盖：
 - 9 种表情（离线、思考、读文件、改代码、跑命令、需要你、完成、出错、饿了）
 - 1 / 2 / 3 / 8 个 Agent 时的布局
 - 时钟页、宠物统计页
+- 天气页：雨、晴夜、雷暴、雪、未设城市，以及只开 3 个页面时的页码圆点。天气数字是标明了 "sample data" 的样例
 
 ## 同类开源固件（可借鉴之处）
 

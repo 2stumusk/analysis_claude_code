@@ -4,6 +4,8 @@
   python -m deskpet --demo                   same, and play a demo session
   python -m deskpet --agents claude,kimi     choose which agents the screen shows
   python -m deskpet --serial auto            also drive a USB-connected device
+  python -m deskpet --city 无锡              weather page for a city (remembered)
+  python -m deskpet --pages face,clock,weather   which pages button A cycles
   python -m deskpet hooks <agent>            print hook config for one agent
   python -m deskpet agents                   list supported agents
 """
@@ -14,7 +16,7 @@ import sys
 
 from . import agents as registry
 from .device import SerialLink
-from .server import serve
+from .server import PAGES, serve
 
 HOME = os.path.join(os.path.expanduser("~"), ".deskpet")
 STATUS = {"tested": "已实测", "docs": "按官方文档", "community": "按第三方资料", "unverified": "未核实"}
@@ -35,6 +37,8 @@ def main(argv=None):
     p.add_argument("--demo", action="store_true", help="play a demo session on start")
     p.add_argument("--serial", metavar="PORT", help="drive a deskpet device over USB: a port such as "
                    "/dev/ttyUSB0 or COM3, or 'auto' to find it")
+    p.add_argument("--city", help="city for the weather page, e.g. 无锡 or Wuxi; '' turns it off")
+    p.add_argument("--pages", help="pages button A cycles through, from: " + ", ".join(PAGES))
     p.add_argument("--no-usage", action="store_true", help="do not read ~/.claude/projects")
     p.add_argument("--state-file", default=os.path.join(HOME, "pet.json"))
     p.add_argument("--config-file", default=os.path.join(HOME, "config.json"))
@@ -59,11 +63,27 @@ def main(argv=None):
         if unknown:
             p.error("unknown agent(s): %s (choose from %s)" % (", ".join(unknown), ", ".join(registry.ORDER)))
 
+    pages = None
+    if args.pages:
+        pages = [x.strip() for x in args.pages.split(",") if x.strip()]
+        unknown = [x for x in pages if x not in PAGES]
+        if unknown or not pages:
+            p.error("unknown page(s): %s (choose from %s)" % (", ".join(unknown), ", ".join(PAGES)))
+
     app, httpd = serve(args.host, args.port, args.state_file, usage=not args.no_usage,
                        demo_on_start=args.demo, config_path=args.config_file, agents=chosen)
+    changes = {}
+    if pages:
+        changes["pages"] = pages
+    if args.city is not None:
+        changes["city"] = args.city
+    if changes:
+        app.set_config(changes)
     print("deskpet: simulator at http://%s:%d/" % (
         "127.0.0.1" if args.host in ("0.0.0.0", "") else args.host, args.port))
     print("         showing: %s (%s mode)" % (", ".join(app.config["agents"]), app.config["mode"]))
+    print("         pages: %s; weather: %s" % (", ".join(app.config["pages"]),
+                                               app.config["city"] or "off (--city 无锡)"))
     print("         hook config: python -m deskpet hooks <agent>")
     if args.serial:
         SerialLink(app, args.serial).start()

@@ -11,6 +11,12 @@ enum class State : uint8_t {
 
 enum class Mood : uint8_t { Hungry, Ok, Happy };
 
+enum class Sky : uint8_t { Clear, Partly, Cloudy, Fog, Drizzle, Rain, Snow, Thunder };
+
+// Pages button A cycles through (bit i = View i in ui.h).
+enum PageBit : uint8_t { PageFace = 1, PageClock = 2, PageWeather = 4, PageAgents = 8, PageStats = 16 };
+constexpr uint8_t kAllPages = 31;
+
 constexpr int kMaxAgents = 8;
 
 struct Agent {
@@ -33,6 +39,28 @@ struct PetInfo {
   float levelup_age, fed_age;  // seconds since, at receive time; < 0 = never
 };
 
+struct HourForecast {
+  int8_t hour;
+  int8_t pop;       // precipitation probability %, -1 unknown
+  int16_t temp;
+  Sky sky;
+  bool day;
+};
+
+struct WeatherInfo {
+  enum class Status : uint8_t { Off, Loading, Error, Ok, Stale } status = Status::Off;
+  char city[16] = "";
+  char text[24] = "";
+  Sky sky = Sky::Clear;
+  bool day = true;
+  bool sample = false;   // demo data, not a real forecast
+  int16_t temp = 0, feels = 0, hi = -99, lo = -99, wind = 0;
+  int8_t humidity = 0, pop = -1;
+  int age_min = 0;
+  int hours = 0;
+  HourForecast hour[6];
+};
+
 struct Model {
   bool connected = false;
   float rx_time = 0;      // device seconds when the frame arrived
@@ -45,9 +73,12 @@ struct Model {
   bool has_usage = false;
   int64_t usage_out = 0;  // Claude output tokens today
   int64_t usage_total = 0;
+  uint8_t pages = kAllPages;
+  WeatherInfo weather;
 };
 
 State parseState(const char* s);
+Sky parseSky(const char* s);
 const char* stateLabel(State s);   // "NEEDS YOU"
 const char* stateShort(State s);   // "WAIT"
 

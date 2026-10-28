@@ -10,6 +10,7 @@
 cd desk_pet
 python3 -m deskpet --demo                    # 启动并播放一段演示会话
 python3 -m deskpet --agents china --demo     # 只显示国产三家
+python3 -m deskpet --city 无锡                # 打开天气页（城市会记住）
 # 浏览器打开 http://127.0.0.1:7878/
 ```
 
@@ -59,7 +60,7 @@ python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stde
 
 | 按键 | 作用 |
 |---|---|
-| A | 切换页面：表情 → 时钟 → Agent 列表 → 宠物 |
+| A | 切换页面：表情 → 时钟 → 天气 → Agent 列表 → 宠物（只在勾选的页面之间切换） |
 | B | 有提醒时：确认（停止闪烁 / 清掉 DONE）；没有提醒时：喂食 |
 
 | 状态 | 触发事件（各家同义事件已统一） | 表情 |
@@ -79,6 +80,17 @@ python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stde
 - **防误报**：`PermissionRequest` 要过 1.5 秒仍没被处理才提醒，自动批准的请求不会让它闪。3 秒内重复的 `Stop` 只算一次，所以 Grok 的通知 hooks 和 Claude 格式 hooks 同时装也不会重复加经验。
 - **宠物养成**：完成任务加经验（基础 10 点，再按工具调用数和耗时加分），每 15 分钟掉 1 点精力，完成任务或按 B 喂食会补回来；精力低时会露出委屈脸。数据存在 `~/.deskpet/pet.json`。
 - **今日用量**：从 `~/.claude/projects/**/*.jsonl` 统计 Claude Code 今天的 token 数，按 `message.id + requestId` 去重。不联网，不读凭证。`--no-usage` 可以关掉。其他 Agent 暂不统计用量。
+
+## 页面与天气
+
+- **选页面**：在网页"页面与天气"里勾选，或用 `--pages face,clock,weather`。A 键只在勾选的页面之间切换，至少保留一页。
+- **天气**：在网页里输入城市保存，或用 `--city 无锡`，会记在 `~/.deskpet/config.json`。
+  - 守护进程每 20 分钟查一次；失败时 5 分钟后重试，期间继续显示上一次的数据，超过 1 小时会标"过期"。
+  - 天气页显示：当前温度、天气、最高最低温、体感、湿度、风速、降水概率，以及接下来 12 小时（每 2 小时一格）。时钟页也会多一行天气摘要。
+  - 设备字体只有英文字符，所以城市名显示英文（无锡 → Wuxi），这个英文名由地理编码接口返回。
+- **数据来源**：[Open-Meteo](https://open-meteo.com)，不用注册，但官方条款写明**免费接口仅限非商业用途**（[条款](https://open-meteo.com/en/terms)），产品商用前要换付费套餐或别的数据源。
+  - 换数据源只需在 `deskpet/weather.py` 写一个带 `locate()` 和 `fetch(place)` 的类，其余代码不用动。
+  - 会发出的数据：城市名（用于查坐标），以及坐标（用于查天气）。
 
 ## 隐私与安全
 
@@ -132,6 +144,7 @@ deskpet/usage.py    今日 Claude token 统计
 deskpet/server.py   HTTP 守护进程 + SSE + 模式配置
 deskpet/demo.py     演示脚本（走真实的 hook 处理流程，按所选 Agent 分配角色）
 deskpet/device.py   USB 串口：给固件发状态帧、自动找设备、接收按键
+deskpet/weather.py  天气：Open-Meteo 地理编码 + 预报，后台定时刷新
 hooks/hook_bridge.py  command hook 转发器（附带身份线索）
 web/                网页模拟器（320×240 canvas）
 firmware/           ESP32 固件（PlatformIO）和电脑端界面预览工具
@@ -148,6 +161,7 @@ tests/              python3 -m unittest discover -s tests
 - DeepSeek 接 Claude Code：https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/
 - Codex hooks：第三方资料（zxkill/agentface32、codex.danielvaughan.com），未读到 OpenAI 官方文档
 - Muse Code hooks：第三方资料（meta-models/muse-code-sdk issue、Arcjet 文档），未读到 dev.meta.ai 官方配置页
+- Open-Meteo 接口参数、返回格式和 WMO 天气代码表：open-meteo/open-meteo-website 仓库里的文档源码；地理编码：open-meteo/geocoding-api（数据来自 GeoNames）
 
 ## 下一步
 

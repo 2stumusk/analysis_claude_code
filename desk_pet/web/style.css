@@ -138,6 +138,12 @@ pre {
 .chip.on { background: var(--text); border-color: var(--text); color: var(--panel); }
 .chip:disabled { opacity: .45; cursor: default; }
 .note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.city { margin-top: 10px; }
+.city input {
+  flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 6px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text);
+}
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .setup { display: grid; gap: 10px; margin-top: 10px; }
 .setup-item { background: var(--chip); border-radius: 10px; padding: 10px; min-width: 0; }
 .setup-item header { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }

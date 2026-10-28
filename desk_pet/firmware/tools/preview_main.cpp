@@ -147,6 +147,20 @@ int parse() {
              m.pet.tools, m.pet.errors, m.has_usage ? (long long)m.usage_out : -1LL, hasTime ? lt.year : 0,
              lt.month, lt.day, lt.hour, lt.minute, lt.second, lt.weekday);
     out += tail;
+    out.pop_back();  // reopen the object for pages and weather
+    const WeatherInfo& w = m.weather;
+    char wbuf[160];
+    snprintf(wbuf, sizeof(wbuf), ",\"pages\":%d,\"weather\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", m.pages,
+             (int)w.status, (int)w.sky, w.day ? 1 : 0, w.sample ? 1 : 0, w.temp, w.feels, w.hi, w.lo, w.pop,
+             w.age_min, w.hours);
+    out += wbuf + std::string(",") + quoted(w.city) + "," + quoted(w.text) + ",[";
+    for (int i = 0; i < w.hours; i++) {
+      const HourForecast& h = w.hour[i];
+      snprintf(wbuf, sizeof(wbuf), "%s[%d,%d,%d,%d,%d]", i ? "," : "", h.hour, h.temp, (int)h.sky, h.pop,
+               h.day ? 1 : 0);
+      out += wbuf;
+    }
+    out += "]]}";
     puts(out.c_str());
   }
   return 0;

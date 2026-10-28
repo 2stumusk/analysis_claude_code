@@ -74,6 +74,31 @@ def device_frame(snap, now=None):
               "er": p["errors_today"], "lu": age(p.get("levelup_at")), "fd": age(p.get("fed_at"))},
         "u": ({"o": usage["output"], "t": usage["input"] + usage["output"] + usage["cache_write"]}
               if usage else None),
+        "pg": "".join(PAGE_LETTERS[p] for p in snap.get("pages") or PAGE_LETTERS if p in PAGE_LETTERS),
+        "w": weather_frame(snap.get("weather")),
+    }
+
+
+PAGE_LETTERS = {"face": "f", "clock": "c", "weather": "w", "agents": "a", "stats": "s"}
+
+
+def weather_frame(w):
+    """The weather part of a frame: None when no city is set."""
+    if not w:
+        return None
+    if w.get("status") not in ("ok", "stale"):
+        return {"st": w.get("status", "loading"), "c": ascii_clip(w.get("query"), 15)}
+    return {
+        "st": w["status"],
+        "c": ascii_clip(w["city"], 15),
+        "tx": ascii_clip(w["text"], 20),
+        "k": w["kind"],
+        "dy": 1 if w.get("day", True) else 0,
+        "t": w["temp"], "fl": w["feels"], "hu": w["humidity"], "ws": w["wind"],
+        "hi": w["hi"] if w["hi"] is not None else -99, "lo": w["lo"] if w["lo"] is not None else -99,
+        "p": w["pop"], "ag": w["age"] // 60,
+        "sm": 1 if w.get("sample") else 0,
+        "h": [[h["h"], h["t"], h["k"], h["p"], h["d"]] for h in w["hours"]],
     }
 
 
@@ -84,7 +109,8 @@ def frame_key(snap, frame):
     them itself."""
     agents = [dict(a, e=a["e"] >= 0) for a in frame["a"]]
     pet = dict(frame["p"], lu=snap["pet"].get("levelup_at"), fd=snap["pet"].get("fed_at"))
-    return json.dumps([frame["f"], agents, pet, frame["u"]], sort_keys=True)
+    weather = dict(frame["w"], ag=None) if frame["w"] else None
+    return json.dumps([frame["f"], agents, pet, frame["u"], frame["pg"], weather], sort_keys=True)
 
 
 def encode(frame):

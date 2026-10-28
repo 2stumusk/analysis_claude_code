@@ -38,7 +38,7 @@ FONTS = [
     ("Custom/DejaVu24.h", "DejaVu24"),
     ("Custom/DejaVu72.h", "DejaVu72"),
 ]
-VIEWS = {"face": 0, "clock": 1, "agents": 2, "stats": 3}
+VIEWS = {"face": 0, "clock": 1, "weather": 2, "agents": 3, "stats": 4}
 
 
 # ---------- fonts ----------
@@ -161,10 +161,22 @@ def tool(name, sid, **inp):
     return ev("PreToolUse", sid, tool_name=name, tool_input=inp)
 
 
-def scene(agents, events, later=125, tweak=None):
+def sample_weather(kind="rain", code=61, day=True, temp=17):
+    """Made-up numbers for screenshots; the screen labels them "sample data"."""
+    sky = ["partly", "rain", "rain", "cloudy", "cloudy", "clear"]
+    from deskpet.weather import describe
+    return {"status": "ok", "sample": True, "city": "Wuxi", "query": "无锡", "temp": temp, "feels": temp - 1,
+            "humidity": 82, "wind": 14, "code": code, "kind": kind, "day": day, "text": describe(code)[1],
+            "text_zh": describe(code)[2], "hi": temp + 4, "lo": temp - 3, "pop": 70, "age": 300,
+            "updated": 0, "source": "sample",
+            "hours": [{"h": (15 + 2 * i) % 24, "t": temp + 2 - i, "k": sky[i], "p": 40, "d": 1 if i < 2 else 0}
+                      for i in range(6)]}
+
+
+def scene(agents, events, later=125, tweak=None, weather=None, pages=None):
     """Frame for an App that saw `events`, `later` seconds after they happened."""
-    app = App(usage=False)
-    app.set_config({"agents": agents})
+    app = App(usage=False, weather_factory=None)
+    app.set_config({"agents": agents, "pages": pages or ["face", "clock", "weather", "agents", "stats"]})
     for agent, payload in events:
         app.handle_hook(agent, payload)
     if tweak:
@@ -172,6 +184,8 @@ def scene(agents, events, later=125, tweak=None):
     snap = app.snapshot()
     if tweak and hasattr(tweak, "usage"):
         snap["usage"] = tweak.usage
+    if weather is not None:
+        snap["weather"] = weather
     return device_frame(snap, now=time.time() + later)
 
 
@@ -217,6 +231,13 @@ def scenes():
     yield "agents-3", "agents", "-", scene(["kimi", "deepseek", "qwen"], [("kimi", ev("UserPromptSubmit", "k")), ("kimi", tool("Read", "k", file_path="/w/README.md")), ("deepseek", ev("SessionStart", "d", cwd="/w/docs-site")), ("qwen", ev("UserPromptSubmit", "q")), ("qwen", tool("Edit", "q", file_path="/w/guide.md", old_string="a"))])
     yield "agents-8", "agents", "-", scene(eight, busy8)
     yield "stats", "stats", "-", scene(duo, start[:2], tweak=with_usage)
+    yield "weather-rain", "weather", "-", scene(duo, start, weather=sample_weather())
+    yield "weather-clear-night", "weather", "-", scene(duo, start, weather=sample_weather("clear", 0, False, 11))
+    yield "weather-thunder", "weather", "-", scene(duo, start, weather=sample_weather("thunder", 95, True, 29))
+    yield "weather-snow", "weather", "-", scene(duo, start, weather=sample_weather("snow", 73, True, -2))
+    yield "weather-off", "weather", "-", scene(duo, start)
+    yield "clock-weather", "clock", "-", scene(duo, start, weather=sample_weather())
+    yield "clock-3-pages", "clock", "-", scene(duo, start, weather=sample_weather(), pages=["face", "clock", "weather"])
 
 
 def main(argv=None):

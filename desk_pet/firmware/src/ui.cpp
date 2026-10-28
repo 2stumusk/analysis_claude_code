@@ -203,6 +203,7 @@ Ui::Pose Ui::target(State s, Mood mood, float now) {
 void Ui::update(const Model& m, float now) {
   float dt = clampf(now - last_, 0, 0.25f);
   last_ = now;
+  if (m.pages && !(m.pages & (1 << (int)view_))) nextView(m);  // page was switched off
   State st = faceState(m);
 
   // Ease the eyes toward the expression; frame-rate independent.
@@ -246,7 +247,14 @@ void Ui::update(const Model& m, float now) {
     prev_states_[i] = m.agents[i].state;
     prev_alerts_[i] = m.agents[i].alert;
   }
-  if (jump && preview_ == State::Count) view_ = View::Face;
+  // Alerts bring back the face, or the agent list when the face is switched off.
+  if (jump && preview_ == State::Count) {
+    if (m.pages & PageFace) {
+      view_ = View::Face;
+    } else if (m.pages & PageAgents) {
+      view_ = View::Agents;
+    }
+  }
 
   if (anyAlert(m)) {
     if (now - last_alert_beep_ > 8) {
@@ -258,7 +266,16 @@ void Ui::update(const Model& m, float now) {
   }
 }
 
-void Ui::nextView() { view_ = (View)(((int)view_ + 1) % (int)View::Count); }
+void Ui::nextView(const Model& m) {
+  uint8_t pages = m.pages ? m.pages : kAllPages;
+  for (int i = 1; i <= (int)View::Count; i++) {
+    View v = (View)(((int)view_ + i) % (int)View::Count);
+    if (pages & (1 << (int)v)) {
+      view_ = v;
+      return;
+    }
+  }
+}
 
 void Ui::showToast(const char* text, float now) {
   snprintf(toast_, sizeof(toast_), "%s", text);
@@ -483,7 +500,7 @@ void Ui::viewFace(Gfx& g, const Model& m, float now) const {
 
 void Ui::viewClock(Gfx& g, const Model& m, float now) const {
   LocalTime lt;
-  char buf[32];
+  char buf[64];
   if (localTime(m, now, &lt)) {
     snprintf(buf, sizeof(buf), "%02d:%02d", lt.hour, lt.minute);
     g.text(buf, W / 2 - 12, 104, Font::Clock, FG, Align::Center);
@@ -494,6 +511,12 @@ void Ui::viewClock(Gfx& g, const Model& m, float now) const {
   } else {
     g.text("--:--", W / 2 - 12, 104, Font::Clock, DIM, Align::Center);
     g.text("waiting for time from deskpet", W / 2, 132, Font::Small, DIM, Align::Center);
+  }
+
+  const WeatherInfo& w = m.weather;
+  if (m.connected && (w.status == WeatherInfo::Status::Ok || w.status == WeatherInfo::Status::Stale)) {
+    snprintf(buf, sizeof(buf), "%s  %dC  %s", w.city, w.temp, w.text);
+    g.text(buf, W / 2, 154, Font::Small, DIM, Align::Center);
   }
 
   drawFace(g, 52, 190, 0.42f, faceState(m), now);
@@ -641,16 +664,179 @@ void Ui::viewStats(Gfx& g, const Model& m, float now) const {
   }
 }
 
+// ---------- weather ----------
+
+namespace {
+
+const uint16_t SUN = rgb(0xffd166);
+const uint16_t MOON = rgb(0xe8e6e3);
+const uint16_t CLOUD = rgb(0xd7dbe0);
+const uint16_t CLOUD_DARK = rgb(0x8a929e);
+const uint16_t RAIN = rgb(0x7cc4ff);
+const uint16_t SNOW = rgb(0xffffff);
+
+int sc(float v, float s) { return (int)(v * s + (v >= 0 ? 0.5f : -0.5f)); }
+
+void cloud(Gfx& g, int cx, int cy, float s, uint16_t c) {
+  g.fillCircle(cx + sc(-14, s), cy + sc(4, s), sc(12, s), c);
+  g.fillCircle(cx + sc(2, s), cy + sc(-6, s), sc(16, s), c);
+  g.fillCircle(cx + sc(16, s), cy + sc(4, s), sc(11, s), c);
+  g.fillRoundRect(cx + sc(-26, s), cy + sc(2, s), sc(53, s), sc(14, s), sc(7, s), c);
+}
+
+void sun(Gfx& g, int cx, int cy, float s, float spin) {
+  g.fillCircle(cx, cy, sc(15, s), SUN);
+  if (s < 0.5f) return;
+  for (int i = 0; i < 8; i++) {
+    float a = spin + i * kPi / 4;
+    g.wideLine(cx + (int)(cosf(a) * 21 * s), cy + (int)(sinf(a) * 21 * s), cx + (int)(cosf(a) * 28 * s),
+               cy + (int)(sinf(a) * 28 * s), 1.8f * s, SUN);
+  }
+}
+
+void moon(Gfx& g, int cx, int cy, float s) {
+  g.fillCircle(cx, cy, sc(15, s), MOON);
+  g.fillCircle(cx + sc(8, s), cy + sc(-6, s), sc(13, s), BG);
+}
+
+// Draws a weather icon about 80*s pixels wide centred on (cx, cy).
+void weatherIcon(Gfx& g, int cx, int cy, float s, Sky sky, bool day, float now) {
+  bool animate = s >= 0.8f;
+  float t = animate ? now : 0;
+  switch (sky) {
+    case Sky::Clear:
+      if (day) {
+        sun(g, cx, cy, s * 1.15f, t * 0.4f);
+      } else {
+        moon(g, cx, cy, s * 1.2f);
+      }
+      break;
+    case Sky::Partly:
+      if (day) {
+        sun(g, cx + sc(-12, s), cy + sc(-10, s), s * 0.75f, t * 0.4f);
+      } else {
+        moon(g, cx + sc(-12, s), cy + sc(-10, s), s * 0.8f);
+      }
+      cloud(g, cx + sc(6, s), cy + sc(6, s), s * 0.85f, CLOUD);
+      break;
+    case Sky::Cloudy:
+      cloud(g, cx + sc(10, s), cy + sc(-8, s), s * 0.7f, CLOUD_DARK);
+      cloud(g, cx + sc(-2, s), cy + sc(4, s), s, CLOUD);
+      break;
+    case Sky::Fog:
+      for (int i = 0; i < 4; i++) {
+        int dx = (i % 2) ? sc(6, s) : sc(-6, s);
+        g.fillRoundRect(cx - sc(26, s) + dx, cy + sc(-14 + i * 9, s), sc(52, s), sc(5, s) + 1, sc(2.5f, s), CLOUD);
+      }
+      break;
+    case Sky::Drizzle:
+    case Sky::Rain:
+    case Sky::Snow: {
+      cloud(g, cx, cy + sc(-8, s), s, sky == Sky::Snow ? CLOUD : CLOUD_DARK);
+      float fall = animate ? fmodf(t * 1.2f, 1) : 0.4f;
+      for (int i = 0; i < 3; i++) {
+        int x = cx + sc(-14 + i * 14, s);
+        int y = cy + sc(16 + fall * 8 + (i % 2) * 5, s);
+        if (sky == Sky::Rain) {
+          g.wideLine(x + sc(3, s), y - sc(5, s), x - sc(1, s), y + sc(4, s), 1.6f * s + 0.4f, RAIN);
+        } else if (sky == Sky::Drizzle) {
+          g.fillCircle(x, y, sc(2, s) + 1, RAIN);
+        } else {
+          g.fillCircle(x, y, sc(3, s) + 1, SNOW);
+        }
+      }
+      break;
+    }
+    case Sky::Thunder:
+      cloud(g, cx, cy + sc(-8, s), s, CLOUD_DARK);
+      g.fillTriangle(cx + sc(2, s), cy + sc(4, s), cx + sc(-8, s), cy + sc(20, s), cx + sc(1, s), cy + sc(20, s), SUN);
+      g.fillTriangle(cx + sc(-1, s), cy + sc(17, s), cx + sc(8, s), cy + sc(17, s), cx + sc(-4, s), cy + sc(34, s), SUN);
+      break;
+  }
+}
+
+}  // namespace
+
+void Ui::viewWeather(Gfx& g, const Model& m, float now) const {
+  const WeatherInfo& w = m.weather;
+  char buf[64];
+  bool ready = m.connected && (w.status == WeatherInfo::Status::Ok || w.status == WeatherInfo::Status::Stale);
+  if (!ready) {
+    weatherIcon(g, W / 2, 78, 1, Sky::Partly, true, now);
+    const char* title = !m.connected                                 ? "not connected"
+                        : w.status == WeatherInfo::Status::Off       ? "no city set"
+                        : w.status == WeatherInfo::Status::Error     ? "weather unavailable"
+                                                                     : "loading weather...";
+    g.text(title, W / 2, 150, Font::Label, FG, Align::Center);
+    if (m.connected && w.status == WeatherInfo::Status::Off) {
+      g.text("run: deskpet --city Wuxi", W / 2, 172, Font::Small, DIM, Align::Center);
+    } else if (w.city[0]) {
+      g.text(w.city, W / 2, 172, Font::Small, DIM, Align::Center);
+    }
+    return;
+  }
+
+  g.text(w.city, 12, 22, Font::Label, FG);
+  if (w.sample) {
+    snprintf(buf, sizeof(buf), "sample data");
+  } else if (w.age_min < 1) {
+    snprintf(buf, sizeof(buf), "just updated");
+  } else {
+    snprintf(buf, sizeof(buf), "%supdated %d min ago", w.status == WeatherInfo::Status::Stale ? "stale: " : "",
+             w.age_min);
+  }
+  g.text(buf, W - 12, 21, Font::Small, w.status == WeatherInfo::Status::Stale ? colorOf(State::Running) : DIM,
+         Align::Right);
+
+  weatherIcon(g, 70, 84, 1.25f, w.sky, w.day, now);
+
+  // Temperature with a hand-drawn degree sign (the fonts are ASCII only).
+  snprintf(buf, sizeof(buf), "%d", w.temp);
+  g.text(buf, 140, 104, Font::Clock, FG);
+  int tw = g.textWidth(buf, Font::Clock);
+  g.fillCircle(140 + tw + 9, 58, 6, FG);
+  g.fillCircle(140 + tw + 9, 58, 3, BG);
+  g.text("C", 140 + tw + 18, 72, Font::Medium, FG);
+
+  g.text(w.text, 140, 128, Font::Label, FG);
+  if (w.hi > -99 && w.lo > -99) {
+    snprintf(buf, sizeof(buf), "H %d  L %d", w.hi, w.lo);
+    g.text(buf, 140, 148, Font::Small, DIM);
+  }
+  int len = snprintf(buf, sizeof(buf), "feels %d  hum %d%%  wind %d", w.feels, w.humidity, w.wind);
+  if (w.pop >= 0) snprintf(buf + len, sizeof(buf) - len, "  rain %d%%", w.pop);
+  g.text(buf, 12, 170, Font::Small, DIM);
+
+  // Next hours.
+  int colW = (W - 20) / 6;
+  for (int i = 0; i < w.hours; i++) {
+    const HourForecast& h = w.hour[i];
+    int x = 10 + colW * i + colW / 2;
+    snprintf(buf, sizeof(buf), "%02d:00", h.hour);
+    g.text(buf, x, 190, Font::Tiny, DIM, Align::Center);
+    weatherIcon(g, x, 204, 0.32f, h.sky, h.day, now);
+    snprintf(buf, sizeof(buf), "%d", h.temp);
+    g.text(buf, x, 228, Font::Small, FG, Align::Center);
+  }
+}
+
 void Ui::draw(Gfx& g, const Model& m, float now) const {
   g.fillRect(0, 0, W, H, BG);
   switch (view_) {
     case View::Face: viewFace(g, m, now); break;
     case View::Clock: viewClock(g, m, now); break;
+    case View::Weather: viewWeather(g, m, now); break;
     case View::Agents: viewAgents(g, m, now); break;
     default: viewStats(g, m, now); break;
   }
+  // One dot per enabled page.
+  uint8_t pages = m.pages ? m.pages : kAllPages;
+  int n = 0, at = 0;
+  for (int i = 0; i < (int)View::Count; i++) n += (pages >> i) & 1;
   for (int i = 0; i < (int)View::Count; i++) {
-    g.fillCircle(W / 2 - 18 + i * 12, H - 4, 2, i == (int)view_ ? FG : FAINT);
+    if (!((pages >> i) & 1)) continue;
+    g.fillCircle(W / 2 - (n - 1) * 6 + at * 12, H - 4, 2, i == (int)view_ ? FG : FAINT);
+    at++;
   }
   if (toast_[0] && now < toast_until_) {
     int w = g.textWidth(toast_, Font::Label) + 24;
