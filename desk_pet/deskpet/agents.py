@@ -11,6 +11,8 @@ import sys
 
 BRIDGE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                       "hooks", "hook_bridge.py")
+DSH_PLUGIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "integrations", "dsh")
 
 # id -> (product name, screen label, 2-letter abbreviation, config file, how sure we are)
 AGENTS = {
@@ -20,6 +22,7 @@ AGENTS = {
     "qwen":     ("Qwen Code", "QWEN", "QW", "~/.qwen/settings.json", "docs"),
     "kimi":     ("Kimi Code", "KIMI", "KM", "~/.kimi-code/config.toml", "docs"),
     "deepseek": ("DeepSeek via Claude Code", "DEEPSEEK", "DS", "~/.claude/settings.json", "docs"),
+    "dsh":      ("DeepSeek Harness", "DSH", "DH", "dsh plugin (integrations/dsh)", "docs"),
     "grok":     ("Grok Build", "GROK", "GK", "~/.grok/config.toml", "docs"),
     "muse":     ("Muse Code", "MUSE", "MU", "~/.config/muse/settings.json", "unverified"),
 }
@@ -28,12 +31,12 @@ DEFAULT_AGENTS = ["claude", "codex"]
 PRESETS = {
     "duo": ["claude", "codex"],
     "global": ["claude", "codex", "gemini", "grok", "muse"],
-    "china": ["kimi", "deepseek", "qwen"],
+    "china": ["kimi", "deepseek", "dsh", "qwen"],
     "all": ORDER,
 }
 
 # Executable names that identify the agent running a hook (process ancestry).
-PROCESS_NAMES = {"grok": "grok", "muse": "muse", "kimi": "kimi", "kimi-code": "kimi",
+PROCESS_NAMES = {"grok": "grok", "muse": "muse", "kimi": "kimi", "kimi-code": "kimi", "dsh": "dsh",
                  "qwen": "qwen", "gemini": "gemini", "codex": "codex", "claude": "claude"}
 # Substrings of ANTHROPIC_BASE_URL hosts, for Claude Code pointed at another vendor.
 HOST_HINTS = [("deepseek", "deepseek"), ("moonshot", "kimi"), ("kimi", "kimi"),
@@ -167,6 +170,17 @@ def hook_config(agent, port=7878):
             "这是 Grok 的通知 hooks，只有就绪 / 等你批准 / 完成 / 出错四种状态。",
             "Grok 还会执行 ~/.claude/settings.json 里的 hooks：装了 Claude Code 的 hooks 后，"
             "deskpet 会按进程自动把它们归到 GROK，可以看到读文件、跑命令等细节。"]
+    if agent == "dsh":
+        # DeepSeek Harness has no hook files; a Cordis plugin bundle posts the events.
+        text = "\n".join("dsh plugin --profile %s add %s" % (profile, DSH_PLUGIN) for profile in ("tui", "web"))
+        if port != 7878:
+            text = "export DESKPET_PORT=%d\n" % port + text
+        return "DeepSeek Harness 的 profile（命令行安装）", text, [
+            "装进你常用的 profile 即可（tui / web / headless 等），装完重启 dsh。",
+            "插件监听会话事件（turn/start、tool/call、approval/asked、turn/end），"
+            "按 Claude Code hooks 的格式发给 deskpet。",
+            "验证：dsh --profile tui --dump-config 里应出现 dsh-deskpet 这一层；"
+            "卸载：dsh plugin --profile tui remove dsh-deskpet。"]
     if agent == "muse":
         cfg = {"schema_version": 1,
                "hooks": _json_hooks(CLAUDE_STYLE_EVENTS + ["PostToolBatch"], bridge_command("muse", port), 5)}

@@ -30,16 +30,19 @@ READ_TOOLS = {
     "read_file", "list_dir", "grep", "glob", "web_search", "view_image",
     "read_many_files", "list_directory", "search_file_content", "grep_search",
     "web_fetch", "google_web_search", "ReadFile", "ReadMediaFile", "SearchWeb",
-    "FetchURL",
+    "FetchURL", "read", "read_image", "lsp",
 }
 EDIT_TOOLS = {
     "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch", "edit",
-    "write_file", "replace", "WriteFile", "StrReplaceFile",
+    "write_file", "replace", "WriteFile", "StrReplaceFile", "write",
 }
 RUN_TOOLS = {
     "Bash", "BashOutput", "KillShell", "PowerShell", "shell", "exec_command",
-    "local_shell", "unified_exec", "run_shell_command", "Shell",
+    "local_shell", "unified_exec", "run_shell_command", "Shell", "pwsh", "run_code",
+    "terminal_send",
 }
+# The agent is asking the human something: show it like a permission prompt.
+QUESTION_TOOLS = {"AskUserQuestion", "ask_user_question"}
 DELEGATE_TOOLS = {"Task", "Agent"}
 
 # Notification types that mean "a human has to look at the screen now".
@@ -83,6 +86,10 @@ def classify_tool(tool_name, tool_input):
     inp = tool_input if isinstance(tool_input, dict) else {}
     path = (inp.get("file_path") or inp.get("path") or inp.get("absolute_path")
             or inp.get("notebook_path") or inp.get("dir_path"))
+
+    if name == "str_replace_editor":  # DeepSeek Harness: command is view/create/str_replace/insert
+        state = "reading" if inp.get("command") == "view" else "editing"
+        return state, _clip(os.path.basename(str(path).rstrip("/")) if path else name)
 
     if name in RUN_TOOLS or (name not in READ_TOOLS | EDIT_TOOLS and "command" in inp):
         cmd = inp.get("command", "")
@@ -183,6 +190,9 @@ class Tracker:
                     s.task_start = now
                 state, detail = classify_tool(payload.get("tool_name"), payload.get("tool_input"))
                 s.set(state, detail, now)
+                if payload.get("tool_name") in QUESTION_TOOLS:
+                    s.wait_at, s.muted = now, False
+                    s.detail = "question for you"
             elif ev in ("PostToolUse", "PostToolUseFailure", "PostToolBatch",
                         "SubagentStop", "PostCompact") or ev in PERMISSION_RESOLVED:
                 s.wait_at = None

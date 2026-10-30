@@ -238,6 +238,8 @@ class HookConfigTest(unittest.TestCase):
     def test_every_agent_has_parseable_config(self):
         import tomllib
         for agent in registry.ORDER:
+            if agent == "dsh":  # a plugin install command, not a config file: see test_dsh.py
+                continue
             path, text, notes = registry.hook_config(agent, 7878)
             self.assertTrue(path.startswith("~/"), agent)
             if path.endswith(".toml"):

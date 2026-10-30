@@ -30,7 +30,8 @@ python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stde
 | `gemini` | Gemini CLI | `~/.gemini/settings.json` | `BeforeTool` `AfterAgent` 等 Gemini 自己的事件名，timeout 单位是毫秒 | 按官方文档 |
 | `qwen` | Qwen Code | `~/.qwen/settings.json` | 与 Claude Code 同名的事件，工具名是 `run_shell_command` 这类 | 按官方文档 |
 | `kimi` | Kimi Code | `~/.kimi-code/config.toml` | TOML `[[hooks]]`，只允许 event / matcher / command / timeout | 按官方文档 |
-| `deepseek` | DeepSeek | `~/.claude/settings.json` | DeepSeek 没有自己的 CLI，官方方案是用 Claude Code 接它的 Anthropic 兼容接口，deskpet 按 API 地址自动识别 | 按官方文档 |
+| `deepseek` | DeepSeek（经 Claude Code） | `~/.claude/settings.json` | 用 Claude Code 接 DeepSeek 的 Anthropic 兼容接口时，deskpet 按 API 地址自动识别 | 按官方文档 |
+| `dsh` | DeepSeek Harness | dsh 的 profile | DeepSeek 官方开源的编程 Agent（命令行 `dsh`）。它没有 hooks 文件，所以用 Cordis 插件 `integrations/dsh` 监听会话事件；`python3 -m deskpet hooks dsh` 输出安装命令 | 按官方文档和源码（插件已用 Node 模拟事件测过，未在真实 dsh 里跑） |
 | `grok` | Grok Build | `~/.grok/config.toml` | 通知 hooks（就绪 / 待批准 / 完成 / 出错）；Grok 还会执行 `~/.claude/settings.json` 里的 hooks，deskpet 按进程自动识别 | 按官方文档 |
 | `muse` | Muse Code | `~/.config/muse/settings.json` | 事件名与 Claude Code 一致 | **未核实**：只查到第三方资料 |
 
@@ -40,10 +41,10 @@ python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stde
 
 网页右侧的"显示哪些 Agent"，或者启动参数 `--agents`：
 
-- **自选**：勾选要显示的 Agent。预设有 `duo`（Claude + Codex，默认）、`global`（海外）、`china`（Kimi、DeepSeek、Qwen）、`all`（全部 8 个）。也可以写成 `--agents claude,kimi,deepseek`。
+- **自选**：勾选要显示的 Agent。预设有 `duo`（Claude + Codex，默认）、`global`（海外）、`china`（Kimi、DeepSeek、DeepSeek Harness、Qwen）、`all`（全部 9 个；设备屏幕最多显示前 8 个）。也可以写成 `--agents claude,kimi,deepseek`。
 - **自动**：哪个 Agent 有活动会话就显示哪个。
 - 选择会保存在 `~/.deskpet/config.json`。没显示的 Agent 照样在后台记录状态，切换后立即可见。
-- 屏幕自动适配数量：超过 2 个时，顶栏改用缩写（CL CX GM QW KM DS GK MU）；超过 3 个时，时钟页改为两列小标签，Agent 页改为紧凑行（每个 Agent 一行）。
+- 屏幕自动适配数量：超过 2 个时，顶栏改用缩写（CL CX GM QW KM DS DH GK MU）；超过 3 个时，时钟页改为两列小标签，Agent 页改为紧凑行（每个 Agent 一行）。
 
 ### 自动识别"到底是谁"
 
@@ -162,6 +163,7 @@ tests/              python3 -m unittest discover -s tests
 - DeepSeek 接 Claude Code：https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/
 - Codex hooks：openai/codex 源码（codex-rs/hooks：事件名、hooks.json 解析、未信任的 hooks 被跳过；codex-rs/features：hooks 默认开启，codex_hooks 为旧别名）
 - Muse Code hooks：第三方资料（meta-models/muse-code-sdk issue、Arcjet 文档），未读到 dev.meta.ai 官方配置页
+- DeepSeek Harness：deepseek-ai/deepseek-harness 源码与文档（docs/user/develop：插件、`session/event`、bundle 安装；packages/core/session：事件类型；docs/tool-catalog.md：工具名）
 - Open-Meteo 接口参数、返回格式和 WMO 天气代码表：open-meteo/open-meteo-website 仓库里的文档源码；地理编码：open-meteo/geocoding-api（数据来自 GeoNames）
 
 ## 下一步
