@@ -15,7 +15,7 @@ BRIDGE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
 # id -> (product name, screen label, 2-letter abbreviation, config file, how sure we are)
 AGENTS = {
     "claude":   ("Claude Code", "CLAUDE", "CL", "~/.claude/settings.json", "tested"),
-    "codex":    ("Codex CLI", "CODEX", "CX", "~/.codex/hooks.json", "community"),
+    "codex":    ("Codex CLI", "CODEX", "CX", "~/.codex/hooks.json", "tested"),
     "gemini":   ("Gemini CLI", "GEMINI", "GM", "~/.gemini/settings.json", "docs"),
     "qwen":     ("Qwen Code", "QWEN", "QW", "~/.qwen/settings.json", "docs"),
     "kimi":     ("Kimi Code", "KIMI", "KM", "~/.kimi-code/config.toml", "docs"),
@@ -142,7 +142,8 @@ def hook_config(agent, port=7878):
     if agent == "codex":
         cfg = {"hooks": _json_hooks(CODEX_EVENTS, bridge_command("codex", port), 5)}
         return "~/.codex/hooks.json", json.dumps(cfg, indent=2), [
-            "重启 Codex 后在 /hooks 里信任这些命令。"]
+            "重启 Codex 后在 /hooks 里信任这些命令：未信任的用户级 hooks 会被静默跳过。",
+            "较旧版本的 Codex 需要在 ~/.codex/config.toml 的 [features] 里打开 hooks（旧名 codex_hooks）。"]
     if agent == "gemini":
         cfg = {"hooks": _json_hooks(GEMINI_EVENTS, bridge_command("gemini", port), 5000)}
         return "~/.gemini/settings.json", json.dumps(cfg, indent=2), [

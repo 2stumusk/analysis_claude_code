@@ -25,8 +25,8 @@ python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stde
 
 | id | 产品 | 配置写到 | 接法 | 可信度 |
 |---|---|---|---|---|
-| `claude` | Claude Code | `~/.claude/settings.json` | 全部生命周期 hooks | **已实测**（Claude Code 2.1.310） |
-| `codex` | Codex CLI | `~/.codex/hooks.json` | 全部生命周期 hooks | 按第三方资料 |
+| `claude` | Claude Code | `~/.claude/settings.json` | 全部生命周期 hooks | **已实测**（Claude Code 2.1.310；Mac + M5Stack 真机） |
+| `codex` | Codex CLI | `~/.codex/hooks.json` | 全部生命周期 hooks；重启后要在 `/hooks` 里信任，否则会被静默跳过 | **已实测**（Mac + M5Stack 真机） |
 | `gemini` | Gemini CLI | `~/.gemini/settings.json` | `BeforeTool` `AfterAgent` 等 Gemini 自己的事件名，timeout 单位是毫秒 | 按官方文档 |
 | `qwen` | Qwen Code | `~/.qwen/settings.json` | 与 Claude Code 同名的事件，工具名是 `run_shell_command` 这类 | 按官方文档 |
 | `kimi` | Kimi Code | `~/.kimi-code/config.toml` | TOML `[[hooks]]`，只允许 event / matcher / command / timeout | 按官方文档 |
@@ -160,7 +160,7 @@ tests/              python3 -m unittest discover -s tests
 - Kimi Code hooks：MoonshotAI/kimi-code 仓库 `docs/en/customization/hooks.md`
 - Grok Build：xai-org/grok-build 仓库的配置文档（通知 hooks、读取 `~/.claude/settings.json`）
 - DeepSeek 接 Claude Code：https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/
-- Codex hooks：第三方资料（zxkill/agentface32、codex.danielvaughan.com），未读到 OpenAI 官方文档
+- Codex hooks：openai/codex 源码（codex-rs/hooks：事件名、hooks.json 解析、未信任的 hooks 被跳过；codex-rs/features：hooks 默认开启，codex_hooks 为旧别名）
 - Muse Code hooks：第三方资料（meta-models/muse-code-sdk issue、Arcjet 文档），未读到 dev.meta.ai 官方配置页
 - Open-Meteo 接口参数、返回格式和 WMO 天气代码表：open-meteo/open-meteo-website 仓库里的文档源码；地理编码：open-meteo/geocoding-api（数据来自 GeoNames）
 
