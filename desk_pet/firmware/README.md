@@ -33,6 +33,8 @@ Core2 和 CYD 还没有真机实测。
 | 长按 B | 确认所有 Agent |
 | C，或长按 A | 开关声音，设置会记住（触屏板没有 C 键，就长按左半边） |
 
+**夜间**（在网页里打开"夜间息屏"后）：任意键亮屏 30 秒；屏幕全黑时，第一下只负责点亮。
+
 **权限请求页**（在网页里打开"按键批准权限"后才会出现）：
 - A 拒绝，B 允许，C 交给电脑。
 - 触屏板：左半边拒绝，右半边允许，长按任意处交给电脑。
@@ -71,8 +73,9 @@ python3 -m deskpet --serial auto        # 自动找到设备；也可以写 /dev
       "hi":21,"lo":14,"p":70,"ag":5,"sm":0,"h":[[15,19,"partly",40,1]]}}
 ```
 
-- 文字只发可打印 ASCII，因为设备字体只有这些字符，中文会变成 `?`。
-- 长度会截断（detail 最多 48 字符），最多 8 个 Agent，一行最长不超过 4 KB。
+- 文字是 UTF-8：ASCII，加上 GB2312 里的汉字和标点（设备用 efontCN_12 显示）。其他字符由电脑端换成 `?`；设备解析时也会把超出范围的字符、控制字符和残缺的 UTF-8 换成 `?`，`\uXXXX` 转义同样能解析。
+- 长度会截断：detail 最多 48 格，汉字算 2 格。最多 8 个 Agent。全部写满中文时，一行也不超过 4 KB（有测试验证）。
+- `nt` 是夜间状态：0 正常，1 调暗，2 熄屏。设备在有提醒或权限请求时、以及按键后 30 秒内，会忽略它保持亮屏。
 - 计时类的字段（`e` 任务已用时、`lu`/`fd` 升级和喂食后过了多久）只发起点，之后由设备自己往上数。
 
 **设备 → 电脑**：
@@ -111,17 +114,18 @@ python3 tools/preview.py --lgfx /path/to/LovyanGFX --out preview/
 - 场景帧由守护进程的 `deskpet/device.py` 真实生成。
 - 记录下来的绘图指令用 Pillow 画出来。文字按 LovyanGFX 字体文件里的字形数据逐像素绘制，字形和宽度与设备一致。图形用 Pillow 近似绘制，圆角和抗锯齿会和真机略有出入。
 
-输出 29 张 PNG 外加一张总览图 `sheet.png`，覆盖：
+输出 32 张 PNG 外加一张总览图 `sheet.png`，覆盖：
 - 9 种表情（离线、思考、读文件、改代码、跑命令、需要你、完成、出错、饿了）
 - 1 / 2 / 3 / 8 个 Agent 时的布局
 - 时钟页、宠物统计页
 - 天气页：雨、晴夜、雷暴、雪、未设城市，以及只开 3 个页面时的页码圆点。天气数字是标明了 "sample data" 的样例
 - 多 Agent 轮流显示、列表页的焦点标记
 - 权限请求页：三键布局（Basic / Core2）、快到时的倒计时、触屏板的两半布局
+- 中文：表情页、列表页、带中文命令的权限请求页。中文按 LovyanGFX 里 efontCN_12 的字形数据逐像素绘制，由 `tools/u8g2font.py` 解码；它只把字体文件当数据读，不编译、不运行其中的代码
 
 ## 同类开源固件（可借鉴之处）
 
-Star 数为 2026-10-26 在 GitHub 页面上看到的取整值。
+Star 数为在 GitHub 上查到的取整值：前几项查于 2026-10-26，LovyanGFX 和 awtrix3 查于 2026-10-30。
 
 | 项目 | Star | 硬件 / 做法 | 借鉴了什么 |
 |---|---|---|---|
@@ -129,6 +133,8 @@ Star 数为 2026-10-26 在 GitHub 页面上看到的取整值。
 | [HermannBjorgvin/Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) | 2.3k | ESP32-S3 AMOLED，显示用量 + 吉祥物 | 证明了"萌 + 实用"的需求；注意它提醒的版权素材问题 |
 | [zxkill/agentface32](https://github.com/zxkill/agentface32) | 2 | M5Stack Basic 等，多 Agent 表情，Wi-Fi hooks | 多 Agent 和事件映射的思路 |
 | [nsyll/clawdometer-eink](https://github.com/nsyll/clawdometer-eink) | 6 | 墨水屏 + BLE + 电池 | 低功耗和墨水屏方向，可作为以后的选项 |
+| [lovyan03/LovyanGFX](https://github.com/lovyan03/LovyanGFX) | 1.8k | 本固件用的图形库 | 自带的 efontCN 中文点阵字体（BSD 许可） |
+| [Blueforcer/awtrix3](https://github.com/Blueforcer/awtrix3) | 2.4k | Ulanzi 像素时钟固件 | 屏幕开关、亮度、自动亮度的设计（它没有按时间段的夜间模式，这部分是自己写的） |
 | [FluxGarage/RoboEyes](https://github.com/FluxGarage/RoboEyes) | 928 | OLED 机器人眼睛动画库 | 眼睛造型思路。它是 GPL-3.0，本固件没有使用它的代码，眼睛是自己画的 |
 
 和它们不同的地方：
@@ -143,4 +149,5 @@ Star 数为 2026-10-26 在 GitHub 页面上看到的取整值。
   - Core2 和 CYD：整体都没实测，CYD 还需要确认屏幕方向
 - Core2 的喇叭要用 I2S 驱动并通过电源芯片打开，暂时没做，所以 Core2 没有声音。
 - CYD 的 ST7789 版本如果颜色不对（反色），需要在 LovyanGFX 配置里调整。
-- 设备端没有中文字体，Agent 的 detail 里的中文会显示成 `?`。
+- 中文只支持 GB2312 范围，生僻字、繁体专用字、emoji 会显示成 `?`。字号固定 12 像素，比英文等宽字体略小。
+- 夜间调暗的亮度（16/255）是估计值，需要在真机上看效果再调。

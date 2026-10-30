@@ -84,6 +84,40 @@ class GfxFont:
             cx += adv
 
 
+class CjkFont:
+    """efontCN_12, which the device switches to for any non-ASCII text."""
+
+    def __init__(self, lgfx_root):
+        from u8g2font import U8g2Font, c_array
+        path = os.path.join(lgfx_root, "src", "lgfx", "Fonts", "efont", "lgfx_efont_cn.c")
+        self.font = U8g2Font(c_array(path, "lgfx_efont_cn_12"))
+
+    def advance(self, ch):
+        g = self.font.glyph(ord(ch))
+        return g[4] if g else self.font.maxw
+
+    def width(self, text):
+        return sum(self.advance(ch) for ch in text)
+
+    def wide_code_points(self):
+        return [cp for cp in range(0x80, 0x10000) if (self.font.glyph(cp) or (0,) * 5)[4] == 12]
+
+    def draw(self, px, text, x, baseline, color, size):
+        cx = x
+        for ch in text:
+            g = self.font.glyph(ord(ch))
+            if not g:
+                cx += self.font.maxw
+                continue
+            w, h, gx, gy, adv, pixels = g
+            top = baseline - (gy + h)
+            for dx, dy in pixels:
+                X, Y = cx + gx + dx, top + dy
+                if 0 <= X < size[0] and 0 <= Y < size[1]:
+                    px[X, Y] = color
+            cx += adv
+
+
 def load_fonts(lgfx_root):
     base = os.path.join(lgfx_root, "src", "lgfx", "Fonts")
     return [GfxFont(os.path.join(base, rel), name) for rel, name in FONTS]
@@ -105,7 +139,7 @@ def rgb565(c):
     return (r * 255 // 31, g * 255 // 63, b * 255 // 31)
 
 
-def paint(commands, fonts):
+def paint(commands, fonts, cjk):
     from PIL import Image, ImageDraw
     img = Image.new("RGB", (320, 240), (0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -114,7 +148,7 @@ def paint(commands, fonts):
         if cmd.startswith("S "):
             head, text = cmd[2:].split("|", 1)
             x, y, f, align, c = (int(v) for v in head.split())
-            font = fonts[f]
+            font = cjk if any(ord(ch) > 127 for ch in text) else fonts[f]
             w = font.width(text)
             x = x if align == 0 else (x - w // 2 if align == 1 else x - w)
             font.draw(px, text, x, y, rgb565(c), img.size)
@@ -256,6 +290,14 @@ def scenes():
     yield "approval-bash", "face", "-", scene(duo, start, later=8, tweak=held("claude", "Bash", cmd))
     yield "approval-codex-edit", "agents", "-", scene(duo, start, later=26, tweak=held(
         "codex", "apply_patch", {"path": "/work/shop-api/src/cart/discounts.rs"}))
+    zh = [("claude", ev("SessionStart", "c", cwd="/work/购物车服务")), ("claude", ev("UserPromptSubmit", "c")),
+          ("claude", tool("Edit", "c", file_path="/work/购物车服务/src/优惠券计算.ts", old_string="a")),
+          ("codex", ev("SessionStart", "x", cwd="/work/数据看板")), ("codex", ev("UserPromptSubmit", "x")),
+          ("codex", tool("Bash", "x", command="python3 导出报表.py --月份 2026-10"))]
+    yield "chinese-face", "face", "-", scene(duo, zh)
+    yield "chinese-agents", "agents", "-", scene(duo, zh)
+    yield "chinese-approval", "face", "-", scene(duo, zh, later=8, tweak=held(
+        "claude", "Bash", {"command": "rm -rf ./构建产物/旧版本 && git commit -m '修复：购物车优惠券叠加计算错误'"}))
     yield "approval-touch", "face", "halves", scene(duo, start, later=8, tweak=held("claude", "Bash", cmd))
 
 
@@ -269,10 +311,12 @@ def main(argv=None):
 
     os.makedirs(args.out, exist_ok=True)
     fonts = load_fonts(args.lgfx)
+    cjk = CjkFont(args.lgfx)
     metrics = os.path.join(args.out, "metrics.txt")
     with open(metrics, "w") as f:
         for i, font in enumerate(fonts):
             f.write("%d %s\n" % (i, " ".join(str(g[3]) for g in font.glyphs)))
+        f.write("-1 %s\n" % " ".join(str(cp) for cp in cjk.wide_code_points()))
     exe = build_harness(args.out, args.cxx)
 
     import json
@@ -282,14 +326,14 @@ def main(argv=None):
         lines.append("\t".join([name, str(VIEWS[view]), preview, "1000",
                                 json.dumps(frame, separators=(",", ":")) if frame else "-"]))
     out = subprocess.run([exe, "render", metrics], input="\n".join(lines) + "\n",
-                         capture_output=True, text=True, check=True).stdout
+                         capture_output=True, text=True, encoding="utf-8", check=True).stdout
 
     images, current, cmds = {}, None, []
     for line in out.splitlines():
         if line.startswith("BEGIN "):
             current, cmds = line[6:], []
         elif line == "END":
-            images[current] = paint(cmds, fonts)
+            images[current] = paint(cmds, fonts, cjk)
         else:
             cmds.append(line)
 

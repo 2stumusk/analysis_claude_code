@@ -12,7 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from deskpet import device  # noqa: E402
-from deskpet.device import SerialLink, ascii_clip, device_frame, encode, frame_key  # noqa: E402
+from deskpet.device import SerialLink, ascii_clip, device_frame, encode, frame_key, screen_clip  # noqa: E402
 from deskpet.server import App  # noqa: E402
 
 FIRMWARE = os.path.join(ROOT, "firmware")
@@ -47,12 +47,12 @@ class FrameTest(unittest.TestCase):
         self.assertEqual((f["v"], f["t"], f["f"]), (1, int(now), 1))  # codex waits: focus
         claude, codex = f["a"]
         self.assertEqual((claude["id"], claude["l"], claude["b"], claude["s"]), ("claude", "CLAUDE", "CL", "running"))
-        self.assertTrue(claude["d"].startswith("pytest ?? -k"))
-        self.assertLessEqual(len(claude["d"]), 48)
-        self.assertEqual(claude["c"], "???-api")
+        self.assertTrue(claude["d"].startswith("pytest 测试 -k"))
+        self.assertEqual(sum(2 if "\u4e00" <= ch <= "\u9fff" else 1 for ch in claude["d"]), 48)
+        self.assertEqual(claude["c"], "购物车-api")
         self.assertGreaterEqual(claude["e"], 64)
         self.assertEqual((codex["s"], codex["x"], codex["e"]), ("waiting", 1, -1))
-        self.assertTrue(all(ord(ch) < 128 for ch in encode(f).decode()))
+        self.assertIn("测试".encode(), encode(f))  # raw UTF-8 on the wire, not \u escapes
         self.assertEqual(f["u"], None)
 
     def test_key_ignores_ticking_values(self):
@@ -64,6 +64,31 @@ class FrameTest(unittest.TestCase):
         app.handle_hook("claude", ev("Stop", "c"))
         snap2 = app.snapshot()
         self.assertNotEqual(frame_key(snap2, device_frame(snap2)), frame_key(snap, a))
+
+    def test_screen_clip(self):
+        self.assertEqual(screen_clip("改 优惠券.ts", 20), "改 优惠券.ts")
+        self.assertEqual(screen_clip("中" * 30, 10), "中中中...")  # 2 columns each, "..." takes 3
+        self.assertEqual(screen_clip("a\tb😀é", 10), "a b?é")      # é is in GB2312; emoji is not
+        self.assertEqual(screen_clip("ﾃｽﾄ", 10), "???")             # half-width katakana: not in GB2312
+        self.assertEqual(screen_clip(None, 5), "")
+
+    def test_worst_case_chinese_frame_fits_the_line_buffer(self):
+        app = App(usage=False)
+        app.set_config({"agents": ["claude", "codex", "gemini", "qwen", "kimi", "deepseek", "grok", "muse"],
+                        "approvals": True})
+        for name in app.config["agents"]:
+            app.handle_hook(name, ev("SessionStart", "s", cwd="/" + "目" * 40))
+            app.handle_hook(name, ev("PreToolUse", "s", tool_name="Bash", tool_input={"command": "命" * 200}))
+        app.approvals.open("claude", "s", "Bash", "批" * 200, 30)
+        line = encode(device_frame(app.snapshot()))
+        self.assertLess(len(line), 4096)  # the firmware's line buffer
+
+    def test_night_level_in_frame(self):
+        app = App(usage=False)
+        snap = app.snapshot()
+        self.assertEqual(device_frame(snap)["nt"], 0)
+        snap2 = dict(snap, night=2)
+        self.assertNotEqual(frame_key(snap, device_frame(snap)), frame_key(snap2, device_frame(snap2)))
 
     def test_at_most_eight_agents(self):
         app = App(usage=False)
@@ -99,9 +124,9 @@ class FirmwareParseTest(unittest.TestCase):
         cls.tmp.cleanup()
 
     def parse(self, *lines):
-        out = subprocess.run([self.exe, "parse"], input="\n".join(lines) + "\n",
-                             capture_output=True, text=True, check=True).stdout
-        return [json.loads(x) for x in out.splitlines()]
+        data = ("\n".join(lines) + "\n").encode("utf-8", "surrogateescape")  # may carry broken UTF-8
+        out = subprocess.run([self.exe, "parse"], input=data, capture_output=True, check=True).stdout
+        return [json.loads(x) for x in out.decode("utf-8").splitlines()]
 
     def test_round_trip(self):
         app = busy_app()
@@ -117,7 +142,7 @@ class FirmwareParseTest(unittest.TestCase):
         claude, codex = got["agents"]
         self.assertEqual(claude[:4], ["claude", "CLAUDE", "CL", "RUNNING"])
         self.assertEqual(claude[4], frame["a"][0]["d"])
-        self.assertEqual(claude[5], "???-api")
+        self.assertEqual(claude[5], "购物车-api")
         self.assertEqual(codex[3], "NEEDS YOU")
         self.assertEqual(codex[-1], 1)
         self.assertEqual(got["pet"], [2, 130, 200, 12, 0, 3, 17, 1])  # mood 0 = hungry
@@ -139,6 +164,10 @@ class FirmwareParseTest(unittest.TestCase):
         (none,) = self.parse('{"v":1,"a":[]}')
         self.assertEqual(none["approval"][0], 0)
 
+    def test_night_round_trip(self):
+        got = self.parse('{"v":1,"a":[],"nt":2}', '{"v":1,"a":[],"nt":1}', '{"v":1,"a":[]}', '{"v":1,"a":[],"nt":9}')
+        self.assertEqual([g["night"] for g in got], [2, 1, 0, 0])
+
     def test_rejects_bad_frames(self):
         results = self.parse('{"v":2,"a":[]}', '{"v":1}', '{"v":1,"a":[', "not json",
                              '{"v":1,"a":[{"id":"x","s":"weird"}],"f":7}')
@@ -150,7 +179,18 @@ class FirmwareParseTest(unittest.TestCase):
         line = json.dumps({"v": 1, "f": 0, "a": [{"id": "claude", "l": "CLAUDE", "s": "running",
                                                   "d": 'say "hi"\\now é 世'}]}, ensure_ascii=False)
         (got,) = self.parse(line)
-        self.assertEqual(got["agents"][0][4], 'say "hi"\\now ? ?')
+        self.assertEqual(got["agents"][0][4], 'say "hi"\\now é 世')
+        # \u escapes, raw UTF-8, broken sequences, emoji and control characters
+        line = '{"v":1,"a":[{"id":"a","s":"idle","d":"\\u4e2d\\u6587 \xe4\xb8\xad x\xe4\xb8 \\ud83d\\ude00 \xf0\x9f\x98\x80\\u0007"}]}'
+        (got,) = self.parse(line.encode("latin-1").decode("utf-8", "surrogateescape"))
+        self.assertEqual(got["agents"][0][4], "中文 中 x? ?? ??")
+
+    def test_long_chinese_is_cut_on_a_character(self):
+        # 70 hanzi = 210 bytes; the detail buffer holds 147: the copy must end
+        # on a whole character, never half of one.
+        line = json.dumps({"v": 1, "a": [{"id": "a", "s": "idle", "d": "中" * 70}]}, ensure_ascii=False)
+        (got,) = self.parse(line)
+        self.assertEqual(got["agents"][0][4], "中" * 49)
 
 
 @unittest.skipUnless(hasattr(os, "openpty") and os.name == "posix", "needs a POSIX pty")

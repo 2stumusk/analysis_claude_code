@@ -17,6 +17,9 @@ using namespace pet;
 namespace {
 
 int advances[(int)Font::Count][95];
+// Text with any non-ASCII byte is drawn in efontCN_12 (gfx_lgfx.h): 6 px per
+// character, 12 px for the code points listed here.
+bool wide[0x10000];
 
 bool loadMetrics(const char* path) {
   FILE* f = fopen(path, "r");
@@ -29,6 +32,10 @@ bool loadMetrics(const char* path) {
         return false;
       }
     }
+  }
+  int cp;
+  while (fscanf(f, "%d", &cp) == 1) {  // after "-1": the wide code points
+    if (cp > 0 && cp < 0x10000) wide[cp] = true;
   }
   fclose(f);
   return true;
@@ -59,6 +66,22 @@ class Recorder : public Gfx {
   }
   int textWidth(const char* s, Font f) override {
     int w = 0;
+    bool ascii = true;
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) ascii = ascii && *p < 0x80;
+    if (!ascii) {
+      for (const unsigned char* p = (const unsigned char*)s; *p;) {
+        uint32_t cp = *p++;
+        if (cp >= 0xE0) {
+          cp = ((cp & 0x0F) << 12) | ((p[0] & 0x3F) << 6) | (p[1] & 0x3F);
+          p += 2;
+        } else if (cp >= 0xC0) {
+          cp = ((cp & 0x1F) << 6) | (p[0] & 0x3F);
+          p += 1;
+        }
+        w += cp < 0x10000 && wide[cp] ? 12 : 6;
+      }
+      return w;
+    }
     for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
       if (*p >= 0x20 && *p < 0x7F) w += advances[(int)f][*p - 0x20];
     }
@@ -165,7 +188,8 @@ int parse() {
     const Approval& ap = m.approval;
     snprintf(wbuf, sizeof(wbuf), ",\"approval\":[%d,%d,%lld,%d,", ap.active ? 1 : 0, ap.agent,
              (long long)ap.deadline, ap.wait);
-    out += wbuf + quoted(ap.id) + "," + quoted(ap.label) + "," + quoted(ap.tool) + "," + quoted(ap.detail) + "]}";
+    out += wbuf + quoted(ap.id) + "," + quoted(ap.label) + "," + quoted(ap.tool) + "," + quoted(ap.detail) + "]";
+    out += ",\"night\":" + std::to_string((int)m.night) + "}";
     puts(out.c_str());
   }
   return 0;

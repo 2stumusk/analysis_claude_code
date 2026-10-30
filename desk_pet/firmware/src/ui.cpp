@@ -64,19 +64,44 @@ void fmtNum(int64_t n, char* out, int cap) {
   }
 }
 
-// Clip `s` to `maxW` pixels, ending in "..." when it had to be cut.
+// Bytes of the UTF-8 character that starts at `s` (fewer if it is cut short).
+int charLen(const char* s) {
+  unsigned char c = (unsigned char)*s;
+  int n = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+  for (int i = 1; i < n; i++) {
+    if (((unsigned char)s[i] & 0xC0) != 0x80) return i;
+  }
+  return n;
+}
+
+// Drop a character that a byte-limited copy cut in half.
+void trimPartial(char* s) {
+  for (int at = 0; s[at];) {
+    unsigned char c = (unsigned char)s[at];
+    int want = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+    int got = charLen(s + at);
+    if (got < want) {
+      s[at] = 0;
+      return;
+    }
+    at += got;
+  }
+}
+
+// Clip `s` to `maxW` pixels, ending in "..." when it had to be cut. Never
+// splits a UTF-8 character.
 const char* fit(Gfx& g, const char* s, int maxW, Font f, char* out, int cap) {
   snprintf(out, cap, "%s", s);
+  trimPartial(out);
   if (g.textWidth(out, f) <= maxW) return out;
   int n = (int)strlen(out);
   while (n > 0) {
-    out[--n] = 0;
-    char tmp[96];
-    snprintf(tmp, sizeof(tmp), "%s...", out);
-    if (g.textWidth(tmp, f) <= maxW) {
-      snprintf(out, cap, "%s", tmp);
-      return out;
-    }
+    do {
+      n--;  // back to the first byte of the last character
+    } while (n > 0 && ((unsigned char)out[n] & 0xC0) == 0x80);
+    if (n + 4 > cap) continue;
+    memcpy(out + n, "...", 4);
+    if (g.textWidth(out, f) <= maxW) return out;
   }
   return out;
 }
@@ -500,7 +525,7 @@ void Ui::viewFace(Gfx& g, const Model& m, float now) const {
     g.text(who, 12 + lw + 8, 196, Font::Small, DIM);
   }
 
-  char buf[96];
+  char buf[160];
   if (!previewing && a && a->elapsed >= 0 && busy(st)) {
     fmtDur(a->elapsed + now - m.rx_time, buf, sizeof(buf));
     g.text(buf, W - 12, 196, Font::MonoBold, FG, Align::Right);
@@ -516,7 +541,7 @@ void Ui::viewFace(Gfx& g, const Model& m, float now) const {
   g.text(fit(g, detail, W - 24, Font::Mono, buf, sizeof(buf)), 12, 214, Font::Mono, SOFT);
 
   if (!previewing && a && a->state != State::Offline) {
-    char bits[96] = "";
+    char bits[160] = "";
     if (a->tools) snprintf(bits + strlen(bits), sizeof(bits) - strlen(bits), "%d tools", a->tools);
     if (a->cwd[0]) snprintf(bits + strlen(bits), sizeof(bits) - strlen(bits), "%s%s", bits[0] ? " | " : "", a->cwd);
     if (a->sessions > 1) {
@@ -588,7 +613,7 @@ void Ui::viewAgents(Gfx& g, const Model& m, float now) const {
   int cardH = (H - 36 - 8 * (n - 1)) / n;
   if (cardH > 96) cardH = 96;
   bool compact = cardH < 80;
-  char buf[96];
+  char buf[160];
   for (int i = 0; i < n; i++) {
     const Agent& a = m.agents[i];
     uint16_t c = colorOf(a.state);
@@ -605,7 +630,7 @@ void Ui::viewAgents(Gfx& g, const Model& m, float now) const {
                                                      : "-";
     g.text(fit(g, detail, W - 44, Font::Mono, buf, sizeof(buf)), 22, y2, Font::Mono, SOFT);
 
-    char bits[96] = "";
+    char bits[160] = "";
     if (a.elapsed >= 0 && busy(a.state)) fmtDur(a.elapsed + now - m.rx_time, bits, sizeof(bits));
     if (a.tools) snprintf(bits + strlen(bits), sizeof(bits) - strlen(bits), "%s%d tools", bits[0] ? " | " : "", a.tools);
     if (a.cwd[0]) snprintf(bits + strlen(bits), sizeof(bits) - strlen(bits), "%s%s", bits[0] ? " | " : "", a.cwd);
@@ -623,7 +648,7 @@ void Ui::viewAgents(Gfx& g, const Model& m, float now) const {
 void Ui::agentRows(Gfx& g, const Model& m, float now) const {
   int rowH = (H - 40) / m.count;
   if (rowH > 26) rowH = 26;
-  char buf[96], dur[16];
+  char buf[160], dur[16];
   for (int i = 0; i < m.count; i++) {
     const Agent& a = m.agents[i];
     int y = 32 + i * rowH;
@@ -861,24 +886,32 @@ void Ui::viewApproval(Gfx& g, const Model& m, float now) const {
   for (int i = 0; i < 4; i++) {
     g.drawRoundRect(2 + i, 2 + i, W - 4 - 2 * i, H - 4 - 2 * i, 10 - i, blend(warn, BG, pulse));
   }
-  char buf[132];
+  char buf[160];
   snprintf(buf, sizeof(buf), "%s asks to use", ap.label);
   g.text(buf, 14, 24, Font::Small, DIM);
   snprintf(buf, sizeof(buf), "%ds", (int)ceilf(left));
   g.text(buf, W - 14, 24, Font::MonoBold, left < 6 ? colorOf(State::Error) : FG, Align::Right);
   g.text(fit(g, ap.tool, W - 28, Font::Title, buf, sizeof(buf)), 14, 52, Font::Title, warn);
 
-  // The command / file / URL, wrapped on character boundaries in the mono font.
+  // The command / file / URL, wrapped at whatever character fills the line
+  // (commands rarely have spaces in the right places).
   g.fillRoundRect(12, 62, W - 24, 90, 8, CARD);
-  int cw = g.textWidth("M", Font::Mono);
-  int per = cw > 0 ? (W - 44) / cw : 26;
-  if (per > (int)sizeof(buf) - 1) per = sizeof(buf) - 1;
-  int len = (int)strlen(ap.detail);
-  for (int line = 0, at = 0; line < 5 && at < len; line++, at += per) {
-    int n = len - at < per ? len - at : per;
-    snprintf(buf, sizeof(buf), "%.*s", n, ap.detail + at);
-    if (line == 4 && at + n < len && n >= 3) memcpy(buf + n - 3, "...", 3);
+  const char* rest = ap.detail;
+  for (int line = 0; line < 5 && *rest; line++) {
+    int n = 0;
+    while (rest[n]) {
+      int step = charLen(rest + n);
+      snprintf(buf, sizeof(buf), "%.*s", n + step, rest);
+      if (n && g.textWidth(buf, Font::Mono) > W - 44) break;
+      n += step;
+    }
+    if (line == 4 && rest[n]) {
+      fit(g, rest, W - 44, Font::Mono, buf, sizeof(buf));
+    } else {
+      snprintf(buf, sizeof(buf), "%.*s", n, rest);
+    }
     g.text(buf, 22, 80 + line * 16, Font::Mono, FG);
+    rest += n;
   }
   bar(g, 12, 158, W - 24, 4, left / (float)ap.wait, left < 6 ? colorOf(State::Error) : warn);
 

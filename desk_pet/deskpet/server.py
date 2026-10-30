@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlparse
 from . import agents as registry
 from . import approvals as approval_rules
 from . import demo
+from . import night as night_rules
 from .approvals import Approvals
 from .core import AUTO_APPROVE_MODES, Tracker
 from .pet import Pet
@@ -60,7 +61,8 @@ class App:
         self.config_path = config_path
         self.config = {"mode": "custom", "agents": list(registry.DEFAULT_AGENTS),
                        "pages": list(PAGES), "city": None, "rotate": True,
-                       "approvals": False, "approval_wait": approval_rules.DEFAULT_WAIT}
+                       "approvals": False, "approval_wait": approval_rules.DEFAULT_WAIT,
+                       "night": dict(night_rules.DEFAULT)}
         self.weather_factory = weather_factory
         self.weather = None
         if config_path and os.path.exists(config_path):
@@ -93,6 +95,8 @@ class App:
         if isinstance(cfg.get("approval_wait"), int) and not isinstance(cfg.get("approval_wait"), bool):
             self.config["approval_wait"] = max(approval_rules.MIN_WAIT,
                                                min(approval_rules.MAX_WAIT, cfg["approval_wait"]))
+        if "night" in cfg:
+            self.config["night"] = night_rules.clean(cfg["night"], self.config["night"])
         if "city" in cfg and (cfg["city"] is None or isinstance(cfg["city"], str)):
             self.config["city"] = (cfg["city"] or "").strip()[:60] or None
 
@@ -242,6 +246,7 @@ class App:
                                 "deadline": int(held.deadline), "wait": held.wait}
             if held.agent in snap["agents"]:  # the request owns the screen
                 snap["focus"], snap["rotation"] = held.agent, None
+        snap["night"] = night_rules.level(self.config["night"])
         snap["weather"] = self.weather.snapshot() if self.weather else None
         snap["v"] = PROTOCOL_VERSION
         snap["pet"] = self.pet.snapshot()

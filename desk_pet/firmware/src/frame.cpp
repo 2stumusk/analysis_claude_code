@@ -55,6 +55,9 @@ class Doc {
   }
 
   // Copy a string member as printable ASCII; anything else becomes '?'.
+  // The string at `key` as UTF-8 (raw UTF-8 and \\uXXXX escapes both work),
+  // cut at a character boundary to fit `cap`. Control characters and anything
+  // outside the Basic Multilingual Plane become '?'.
   void str(int obj, const char* key, char* out, int cap) const {
     out[0] = 0;
     int n = get(obj, key);
@@ -62,21 +65,45 @@ class Doc {
     const char* p = nodes_[n].p;
     const char* end = p + nodes_[n].len;
     int o = 0;
-    while (p < end && o < cap - 1) {
-      unsigned char ch = (unsigned char)*p++;
-      if (ch == '\\' && p < end) {
+    while (p < end) {
+      uint32_t cp = (unsigned char)*p++;
+      if (cp == '\\' && p < end) {
         char e = *p++;
         if (e == 'u') {
-          p += (end - p >= 4) ? 4 : end - p;
-          ch = '?';
+          cp = 0;
+          for (int i = 0; i < 4 && p < end; i++, p++) {
+            char h = *p;
+            cp = cp * 16 + (h >= '0' && h <= '9' ? h - '0' : (h | 0x20) >= 'a' && (h | 0x20) <= 'f' ? (h | 0x20) - 'a' + 10 : 0);
+          }
+          if (cp >= 0xD800 && cp < 0xE000) cp = '?';  // half of a surrogate pair
         } else {
-          ch = e == 'n' || e == 't' || e == 'r' ? ' ' : (unsigned char)e;
+          cp = e == 'n' || e == 't' || e == 'r' ? ' ' : (unsigned char)e;
         }
-      } else if (ch >= 0x80) {
-        while (p < end && ((unsigned char)*p & 0xC0) == 0x80) p++;  // skip UTF-8 tail
-        ch = '?';
+      } else if (cp >= 0x80) {
+        int more = cp >= 0xF0 ? 3 : cp >= 0xE0 ? 2 : cp >= 0xC0 ? 1 : -1;
+        cp &= more == 3 ? 0x07 : more == 2 ? 0x0F : 0x1F;
+        for (int i = 0; i < more; i++) {
+          if (p >= end || ((unsigned char)*p & 0xC0) != 0x80) {
+            more = -1;
+            break;
+          }
+          cp = (cp << 6) | ((unsigned char)*p++ & 0x3F);
+        }
+        if (more < 0 || cp > 0xFFFF) cp = '?';
       }
-      out[o++] = (ch >= 0x20 && ch < 0x7F) ? (char)ch : '?';
+      if (cp < 0x20 || cp == 0x7F) cp = '?';
+      int len = cp < 0x80 ? 1 : cp < 0x800 ? 2 : 3;
+      if (o + len > cap - 1) break;
+      if (len == 1) {
+        out[o++] = (char)cp;
+      } else if (len == 2) {
+        out[o++] = (char)(0xC0 | (cp >> 6));
+        out[o++] = (char)(0x80 | (cp & 0x3F));
+      } else {
+        out[o++] = (char)(0xE0 | (cp >> 12));
+        out[o++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[o++] = (char)(0x80 | (cp & 0x3F));
+      }
     }
     out[o] = 0;
   }
@@ -242,7 +269,8 @@ bool parseFrame(const char* line, Model& m, float now) {
   int arr = doc->get(root, "a");
   if (arr < 0 || doc->at(arr).type != T::Arr) return false;
 
-  Model next = m;
+  static Model next;  // a few KB: keep it off the loop task's stack
+  next = m;
   next.count = 0;
   for (int a = doc->at(arr).child; a >= 0 && next.count < kMaxAgents; a = doc->at(a).next) {
     if (doc->at(a).type != T::Obj) continue;
@@ -365,6 +393,8 @@ bool parseFrame(const char* line, Model& m, float now) {
     if (ap.wait < 1) ap.wait = 1;
     ap.active = ap.id[0] != 0;
   }
+  int nt = (int)doc->num(root, "nt", 0);
+  next.night = (nt == 1 || nt == 2) ? (Night)nt : Night::Day;
   next.connected = true;
   next.rx_time = now;
   m = next;

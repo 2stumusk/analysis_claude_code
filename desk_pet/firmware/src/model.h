@@ -19,13 +19,18 @@ constexpr uint8_t kAllPages = 31;
 
 constexpr int kMaxAgents = 8;
 
+// Night mode the daemon asks for: screen as usual, dimmed, or off.
+enum class Night : uint8_t { Day, Dim, Off };
+
+// Text is UTF-8: ASCII plus GB2312 Chinese (up to 3 bytes per screen column).
+
 struct Agent {
   char id[12];
   char label[10];    // "DEEPSEEK"
   char abbr[4];      // "DS"
   State state;
-  char detail[52];   // ASCII only, already clipped by the daemon
-  char cwd[24];
+  char detail[148];  // 48 columns, already clipped by the daemon
+  char cwd[68];      // 22 columns
   int32_t elapsed;   // task seconds when the frame was sent, -1 = no task
   uint16_t tools;
   uint8_t sessions;
@@ -68,7 +73,7 @@ struct Approval {
   int agent = -1;        // index into agents, -1 = not shown
   char label[10] = "";
   char tool[21] = "";
-  char detail[124] = "";
+  char detail[364] = "";  // 120 columns
   int64_t deadline = 0;  // daemon unix time
   int wait = 30;         // full wait, seconds (countdown bar)
 };
@@ -90,6 +95,7 @@ struct Model {
   uint8_t pages = kAllPages;
   WeatherInfo weather;
   Approval approval;
+  Night night = Night::Day;
 };
 
 State parseState(const char* s);

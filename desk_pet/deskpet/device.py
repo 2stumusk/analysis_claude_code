@@ -18,6 +18,7 @@ import select
 import sys
 import threading
 import time
+import unicodedata
 
 BAUD = 115200
 HEARTBEAT = 5.0
@@ -27,6 +28,40 @@ HELLO_WAIT = 4.0
 KNOWN_VIDS = {0x1A86, 0x10C4, 0x0403, 0x303A}
 POSIX_PATTERNS = ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/cu.usbserial*", "/dev/cu.wchusbserial*",
                   "/dev/cu.SLAB_USBtoUART*", "/dev/cu.usbmodem*"]
+
+
+def _screen_char(ch):
+    """The character as the device can draw it: ASCII from its own fonts,
+    anything in GB2312 (all 6763 common hanzi, CJK punctuation) from efontCN_12."""
+    if " " <= ch < "\x7f":
+        return ch
+    if ch.isspace():
+        return " "
+    try:
+        ch.encode("gb2312")
+        return ch
+    except UnicodeEncodeError:
+        return "?"
+
+
+def _columns(ch):
+    return 2 if unicodedata.east_asian_width(ch) in "WF" else 1
+
+
+def screen_clip(text, limit):
+    """Like ascii_clip, but Chinese survives. `limit` counts columns: a hanzi
+    is two, the width it takes on screen (efont: 6 px narrow, 12 px wide).
+    UTF-8 length stays within 3 bytes per column, which the firmware sizes for."""
+    chars = [_screen_char(ch) for ch in str(text or "")]
+    if sum(_columns(ch) for ch in chars) <= limit:
+        return "".join(chars)
+    out, used = [], 0
+    for ch in chars:
+        if used + _columns(ch) > limit - 3:
+            break
+        out.append(ch)
+        used += _columns(ch)
+    return "".join(out) + "..."
 
 
 def ascii_clip(text, limit):
@@ -52,8 +87,8 @@ def device_frame(snap, now=None):
             "l": ascii_clip(a.get("label") or name.upper(), 9),
             "b": ascii_clip(a.get("abbr") or name[:2].upper(), 3),
             "s": a["state"],
-            "d": ascii_clip(a.get("detail"), 48),
-            "c": ascii_clip(a.get("cwd"), 22),
+            "d": screen_clip(a.get("detail"), 48),
+            "c": screen_clip(a.get("cwd"), 22),
             "e": max(0, int(now - a["task_start"])) if busy and a.get("task_start") else -1,
             "n": int(a.get("tools") or 0),
             "k": int(a.get("sessions") or 0),
@@ -81,6 +116,7 @@ def device_frame(snap, now=None):
                if snap.get("rotation") and snap.get("focus") in order else None),
         "w": weather_frame(snap.get("weather")),
         "ap": approval_frame(snap.get("approval"), order),
+        "nt": int(snap.get("night") or 0),  # 0 day, 1 dim, 2 screen off
     }
 
 
@@ -91,7 +127,7 @@ def approval_frame(ap, order):
         return None
     return {"id": ascii_clip(ap["id"], 23), "a": order.index(ap["agent"]) if ap["agent"] in order else -1,
             "l": ascii_clip(ap["label"], 9), "t": ascii_clip(ap["tool"], 20),
-            "d": ascii_clip(ap["detail"], 120), "dl": int(ap["deadline"]), "n": int(ap["wait"])}
+            "d": screen_clip(ap["detail"], 120), "dl": int(ap["deadline"]), "n": int(ap["wait"])}
 
 
 PAGE_LETTERS = {"face": "f", "clock": "c", "weather": "w", "agents": "a", "stats": "s"}
@@ -126,11 +162,12 @@ def frame_key(snap, frame):
     pet = dict(frame["p"], lu=snap["pet"].get("levelup_at"), fd=snap["pet"].get("fed_at"))
     weather = dict(frame["w"], ag=None) if frame["w"] else None
     return json.dumps([frame["f"], agents, pet, frame["u"], frame["pg"], weather, frame["ro"],
-                       frame["ap"]], sort_keys=True)
+                       frame["ap"], frame["nt"]], sort_keys=True)
 
 
 def encode(frame):
-    return (json.dumps(frame, separators=(",", ":")) + "\n").encode("ascii")
+    # Raw UTF-8 rather than \u escapes: a hanzi costs 3 bytes instead of 6.
+    return (json.dumps(frame, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
 
 
 # ---------- serial ports ----------

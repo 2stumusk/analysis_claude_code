@@ -57,6 +57,19 @@
     </div>
 
     <div class="group">
+      <h2>夜间息屏</h2>
+      <label class="check"><input type="checkbox" id="nightOn"> 按时间自动熄屏 / 调暗</label>
+      <div class="row wait">
+        <label for="nightFrom">从</label><input type="time" id="nightFrom" value="23:00">
+        <label for="nightTo">到</label><input type="time" id="nightTo" value="07:00">
+        <select id="nightLevel" aria-label="夜间屏幕">
+          <option value="off">熄屏</option><option value="dim">调暗</option>
+        </select>
+      </div>
+      <p class="note" id="nightNote"></p>
+    </div>
+
+    <div class="group">
       <h2>页面与天气 <small>按 A 键在勾选的页面间切换</small></h2>
       <div class="chips" id="pages"></div>
       <form class="row city" id="cityForm">

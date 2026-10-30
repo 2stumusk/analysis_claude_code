@@ -36,6 +36,8 @@
   let prev = { states: {}, alerts: {} };
   let approvalSeen = { id: null, at: 0 };  // when the current request first showed
   const ARM = 0.8;  // seconds before the buttons answer a new request (no accidental presses)
+  const WAKE = 30;  // seconds a key press keeps the screen lit at night (as the firmware)
+  let awakeUntil = 0;
 
   // ---------- helpers ----------
   const now = () => Date.now() / 1000;
@@ -671,6 +673,15 @@
     }).catch(() => { toast = { text: "no daemon", until: now() + 1.4 }; });
   }
 
+  // ---------- night mode ----------
+  // 0 day, 1 dim, 2 off; alerts and permission requests keep the screen lit.
+  function brightness(t) {
+    const level = (snap && snap.night) || 0;
+    if (!level || !connected || t < awakeUntil || preview) return 1;
+    if (approval() || Object.values(snap.agents).some((a) => a.alert)) return 1;
+    return level === 1 ? 0.12 : 0;
+  }
+
   function enabledViews() {
     const pages = snap && snap.pages ? VIEWS.filter((v) => snap.pages.includes(v)) : VIEWS;
     return pages.length ? pages : VIEWS;
@@ -684,9 +695,15 @@
     ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
     const pages = enabledViews();
     if (!pages.includes(view)) view = pages[0];
+    const light = brightness(t);
+    if (light === 0) {  // screen off: nothing drawn, like the device
+      updateLed(t);
+      requestAnimationFrame(frame);
+      return;
+    }
     if (approval()) {
       viewApproval(t);
-      drawToast(t); updateLed(t); maybeBeep(t);
+      drawToast(t); updateLed(t); maybeBeep(t); dimScreen(light);
       requestAnimationFrame(frame);
       return;
     }
@@ -700,7 +717,14 @@
     drawToast(t);
     updateLed(t);
     maybeBeep(t);
+    dimScreen(light);
     requestAnimationFrame(frame);
+  }
+
+  function dimScreen(light) {
+    if (light >= 1) return;
+    ctx.fillStyle = `rgba(0, 0, 0, ${1 - light})`;
+    ctx.fillRect(0, 0, W, H);
   }
 
   function resize() {
@@ -735,7 +759,10 @@
     done: () => { tone(660, 0, 0.1); tone(880, 0.1, 0.1); tone(1320, 0.2, 0.22); },
     error: () => { tone(220, 0, 0.3, "square", 0.04); },
   };
-  function play(name) { if (soundOn && audio && SOUNDS[name]) SOUNDS[name](); }
+  function play(name) {
+    if (snap && snap.night && name !== "waiting") return;  // quiet at night, as the device
+    if (soundOn && audio && SOUNDS[name]) SOUNDS[name]();
+  }
 
   function maybeBeep(t) {
     if (!snap) return;
@@ -811,6 +838,9 @@
   function press(btn, el, all = false) {
     el.classList.add("pressed"); setTimeout(() => el.classList.remove("pressed"), 120);
     ensureAudio();
+    const t = now(), dark = brightness(t) === 0;
+    if (snap && snap.night) awakeUntil = t + WAKE;
+    if (dark) return;  // this press only woke the screen
     if (approval()) {
       // While a request is on screen the keys answer it; long B does nothing.
       if (armed(now()) && !all) answer({ A: "deny", B: "allow", C: "skip" }[btn]);
@@ -920,6 +950,21 @@
   const approvalNote = document.getElementById("approvalNote");
   approvalsBox.addEventListener("change", () => saveConfig({ approvals: approvalsBox.checked }));
   waitSel.addEventListener("change", () => saveConfig({ approval_wait: Number(waitSel.value) }));
+  const nightOn = document.getElementById("nightOn"), nightFrom = document.getElementById("nightFrom");
+  const nightTo = document.getElementById("nightTo"), nightLevel = document.getElementById("nightLevel");
+  const nightNote = document.getElementById("nightNote");
+  const saveNight = () => saveConfig({ night: { on: nightOn.checked, from: nightFrom.value || "23:00",
+    to: nightTo.value || "07:00", level: nightLevel.value } });
+  [nightOn, nightFrom, nightTo, nightLevel].forEach((el) => el.addEventListener("change", saveNight));
+  function renderNight() {
+    const n = config.night || { on: false, from: "23:00", to: "07:00", level: "off" };
+    nightOn.checked = n.on;
+    nightFrom.value = n.from; nightTo.value = n.to; nightLevel.value = n.level;
+    [nightFrom, nightTo, nightLevel].forEach((el) => { el.disabled = !n.on; });
+    nightNote.textContent = n.on
+      ? `每天 ${n.from}–${n.to} ${n.level === "off" ? "熄屏" : "调暗"}（按电脑的本地时间）。有 Agent 需要你或有权限请求时照样亮屏；按任意键亮 30 秒，熄屏时这一下只负责点亮。夜里只有"需要你"会响，完成提示音静音。`
+      : "关闭：屏幕一直亮着。";
+  }
   function renderApprovals() {
     approvalsBox.checked = !!config.approvals;
     waitSel.value = String(config.approval_wait || 30);
@@ -1015,6 +1060,7 @@
     }
     rotateBox.checked = config.rotate !== false;
     renderApprovals();
+    renderNight();
     pickNote.textContent = auto
       ? "自动模式：哪个 Agent 有活动会话就显示哪个，全部空闲时显示 OFFLINE。"
       : `已选 ${config.agents.length} 个。超过 2 个时顶栏用缩写，超过 3 个时列表页改为紧凑行。`;

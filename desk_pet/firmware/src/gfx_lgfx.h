@@ -32,7 +32,7 @@ class LgfxGfx : public Gfx {
     s_.drawWideLine(x0, y0 - dy_, x1, y1 - dy_, r, c);
   }
   void text(const char* str, int x, int baseline, Font f, uint16_t c, Align a) override {
-    s_.setFont(font(f));
+    s_.setFont(font(f, str));
     s_.setTextColor(c);  // no background: transparent
     s_.setTextDatum(a == Align::Left     ? lgfx::textdatum_t::baseline_left
                     : a == Align::Center ? lgfx::textdatum_t::baseline_center
@@ -40,8 +40,18 @@ class LgfxGfx : public Gfx {
     s_.drawString(str, x, baseline - dy_);
   }
   int textWidth(const char* str, Font f) override {
-    s_.setFont(font(f));
+    s_.setFont(font(f, str));
     return s_.textWidth(str);
+  }
+
+  // The built-in fonts only have ASCII; text with anything else (Chinese file
+  // names, commands...) is drawn whole in efontCN_12, a 12 px bitmap font
+  // covering GB2312 (BSD licence, ships with LovyanGFX).
+  static const lgfx::IFont* font(Font f, const char* str) {
+    for (const char* p = str; *p; p++) {
+      if ((unsigned char)*p >= 0x80) return &fonts::efontCN_12;
+    }
+    return font(f);
   }
 
   static const lgfx::IFont* font(Font f) {

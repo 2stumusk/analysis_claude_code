@@ -13,6 +13,9 @@
 // the pet (hold: acknowledge every agent)  C: sound on/off
 // While a permission request is on screen: A deny, B allow, C (or any hold)
 // leave it to the computer.
+// Night mode (set on the PC): the screen dims or goes dark; alerts and
+// permission requests light it up, and a key press wakes it for 30 s (the
+// press that wakes a dark screen does nothing else).
 #include <Arduino.h>
 #include <LGFX_AUTODETECT.hpp>
 #include <LovyanGFX.hpp>
@@ -44,6 +47,10 @@ bool muted = false;
 const uint32_t kBaud = 115200;
 const float kLinkTimeout = 15;  // the daemon sends at least every 5 s
 const uint32_t kLongPressMs = 800;
+const uint8_t kBright = 160, kDim = 16;
+const float kWakeSeconds = 30;
+float awakeUntil = -100;   // a key press keeps the screen lit at night until then
+uint8_t brightness = 0;
 
 float nowSeconds() { return millis() / 1000.0f; }
 
@@ -219,8 +226,26 @@ void onApproval(int b, float now) {
   play(Sound::Click);
 }
 
+bool needsYou(const Model& m, float now) {
+  if (ui.approvalShown(m, now)) return true;
+  for (int i = 0; i < m.count; i++) {
+    if (m.agents[i].alert) return true;
+  }
+  return false;
+}
+
+// Brightness for night mode; 0 means the screen is off and not drawn.
+uint8_t targetBrightness(float now) {
+  if (!model.connected || model.night == Night::Day) return kBright;
+  if (now < awakeUntil || needsYou(model, now)) return kBright;
+  return model.night == Night::Dim ? kDim : 0;
+}
+
 void onButton(int b) {
   float now = nowSeconds();
+  bool dark = brightness == 0;
+  if (model.night != Night::Day) awakeUntil = now + kWakeSeconds;
+  if (dark) return;  // this press only woke the screen
   if (ui.approvalShown(model, now)) {
     onApproval(b, now);
     return;
@@ -261,7 +286,8 @@ void setup() {
   Serial.begin(kBaud);
   lcd.init();
   if (lcd.width() < lcd.height()) lcd.setRotation(lcd.getRotation() ^ 1);
-  lcd.setBrightness(160);
+  lcd.setBrightness(kBright);
+  brightness = kBright;
   lcd.fillScreen(TFT_BLACK);
   boardBegin();
   ui.setHalves(kind != Kind::M5Basic && kind != Kind::M5Core2);
@@ -290,12 +316,19 @@ void loop() {
 
   float now = nowSeconds();
   ui.update(model, now);
-  play(ui.takeSound());
+  Sound sound = ui.takeSound();
+  // At night only "needs you" makes a sound; finished tasks stay quiet.
+  if (model.night == Night::Day || sound == Sound::Waiting || sound == Sound::Click) play(sound);
   uint16_t ledColor = 0;
   bool ledOn = ui.led(model, now, &ledColor);
-  setLed(ledOn, ledColor);
+  uint8_t want = targetBrightness(now);
+  setLed(ledOn && (model.night == Night::Day || needsYou(model, now)), ledColor);
+  if (want != brightness) {
+    brightness = want;
+    lcd.setBrightness(brightness);
+  }
 
-  for (int y = 0; y < H; y += bandHeight) {
+  for (int y = 0; y < H && brightness > 0; y += bandHeight) {
     gfx.setBand(y);
     ui.draw(gfx, model, now);
     band.pushSprite(&lcd, 0, y);
