@@ -225,6 +225,11 @@ def scenes():
     yield "face-error", "face", "-", scene(["codex"], start[1:2] + [("codex", ev("UserPromptSubmit", "x")), ("codex", ev("StopFailure", "x", error="cargo test: 2 failed"))], later=3)
     yield "face-hungry", "face", "-", scene(duo, start[:2], tweak=hungry)
     yield "face-8-agents", "face", "-", scene(eight, busy8)
+    three = ["claude", "codex", "kimi"]
+    busy3 = [(a, ev("UserPromptSubmit", a)) for a in three] + [
+        ("codex", tool("Bash", "codex", command="cargo build --release"))]
+    yield "face-rotating", "face", "-", scene(three, busy3)
+    yield "agents-focus-marker", "agents", "-", scene(three, busy3)
     yield "clock-2", "clock", "-", scene(duo, start + [("codex", tool("Bash", "x", command="cargo test"))])
     yield "clock-8", "clock", "-", scene(eight, busy8)
     yield "agents-2", "agents", "-", scene(duo, start + [("claude", ev("Notification", "c", notification_type="permission_prompt")), ("codex", tool("Bash", "x", command="cargo build --release"))])

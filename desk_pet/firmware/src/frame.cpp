@@ -262,6 +262,16 @@ bool parseFrame(const char* line, Model& m, float now) {
   }
   int focus = (int)doc->num(root, "f", -1);
   next.focus = (focus >= 0 && focus < next.count) ? focus : -1;
+  next.rot_index = next.rot_count = 0;
+  int ro = doc->get(root, "ro");
+  if (ro >= 0 && doc->at(ro).type == T::Arr) {
+    int first = doc->at(ro).child;
+    int second = first >= 0 ? doc->at(first).next : -1;
+    if (second >= 0 && doc->at(first).type == T::Num && doc->at(second).type == T::Num) {
+      next.rot_index = (int)strtol(doc->at(first).p, nullptr, 10);
+      next.rot_count = (int)strtol(doc->at(second).p, nullptr, 10);
+    }
+  }
   next.epoch = (int64_t)doc->num(root, "t", 0);
   next.tz = (int32_t)doc->num(root, "tz", 0);
 

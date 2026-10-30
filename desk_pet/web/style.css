@@ -154,3 +154,6 @@ pre {
 .setup-item code { font-size: 12px; overflow-wrap: anywhere; }
 .setup-item ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
 .setup-item pre { max-height: 180px; }
+
+.check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; cursor: pointer; }
+.check input { accent-color: var(--accent); }

@@ -68,6 +68,8 @@ struct Model {
   int32_t tz = 0;         // daemon's UTC offset, seconds
   int count = 0;
   int focus = -1;         // index into agents, -1 = none
+  int rot_index = 0;      // the face is rotating between busy agents:
+  int rot_count = 0;      //   showing number rot_index of rot_count (0 = not rotating)
   Agent agents[kMaxAgents];
   PetInfo pet{1, 0, 100, 80, Mood::Ok, 0, 0, 0, -1, -1};
   bool has_usage = false;

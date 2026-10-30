@@ -7,8 +7,10 @@
 // Boards (LovyanGFX autodetect picks the panel and touch controller):
 //   M5Stack Basic / Gray   buttons A B C, speaker on GPIO25
 //   M5Stack Core2          touch strip under the screen as A B C, no sound yet
-//   ESP32-2432S028 "CYD"   touch: left half A, right half B, hold for C;
-//                          speaker connector on GPIO26, RGB LED
+//   ESP32-2432S028 "CYD"   touch: left half A, right half B; speaker connector
+//                          on GPIO26, RGB LED
+// A: next page (hold: sound on/off)  B: acknowledge the agent on screen, or feed
+// the pet (hold: acknowledge every agent)  C: sound on/off
 #include <Arduino.h>
 #include <LGFX_AUTODETECT.hpp>
 #include <LovyanGFX.hpp>
@@ -99,7 +101,9 @@ int rawButton() {
   return x < W / 2 ? 1 : 2;
 }
 
-// One event per release: short press = the button, long press = C.
+enum Event { kNone, kA, kB, kC, kBLong };
+
+// One event per release; holding A means C (boards without a C button), holding B means "all".
 int pollButton() {
   static int held = 0;
   static uint32_t since = 0;
@@ -109,7 +113,8 @@ int pollButton() {
     held = b;
     since = ms;
   } else if (!b && held) {
-    int event = (ms - since >= kLongPressMs) ? 3 : held;
+    bool longPress = ms - since >= kLongPressMs;
+    int event = !longPress ? held : held == kB ? kBLong : kC;
     held = 0;
     if (ms - since >= 30) return event;  // debounce
   }
@@ -201,19 +206,28 @@ void linkPoll() {
 
 void onButton(int b) {
   float now = nowSeconds();
-  if (b == 1) {
+  if (b == kA) {
     ui.nextView(model);
     play(Sound::Click);
-  } else if (b == 2) {
-    Serial.println("{\"btn\":\"B\"}");
-    bool ack = false;
-    for (int i = 0; i < model.count; i++) {
-      State s = model.agents[i].state;
-      ack |= model.agents[i].alert || s == State::Done || s == State::Error;
+  } else if (b == kB) {
+    // Name the agent that is on screen, so a rotation between press and
+    // arrival cannot acknowledge a different one.
+    const Agent* a = model.focus >= 0 ? &model.agents[model.focus] : nullptr;
+    if (a) {
+      Serial.printf("{\"btn\":\"B\",\"agent\":\"%s\"}\n", a->id);
+    } else {
+      Serial.println("{\"btn\":\"B\"}");
     }
-    ui.showToast(!model.connected ? "no link" : ack ? "OK, got it" : "yum! +energy", now);
+    bool ack = a && (a->alert || a->state == State::Done || a->state == State::Error);
+    char text[24];
+    snprintf(text, sizeof(text), "OK: %s", a ? a->label : "");
+    ui.showToast(!model.connected ? "no link" : ack ? text : "yum! +energy", now);
     play(Sound::Click);
-  } else if (b == 3) {
+  } else if (b == kBLong) {
+    Serial.println("{\"btn\":\"B\",\"all\":1}");
+    ui.showToast(model.connected ? "all clear" : "no link", now);
+    play(Sound::Click);
+  } else if (b == kC) {
     muted = !muted;
     prefs.putBool("mute", muted);
     ui.showToast(muted ? "sound off" : "sound on", now);

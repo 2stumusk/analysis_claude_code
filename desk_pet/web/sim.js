@@ -351,7 +351,9 @@
     text(stateLabel, 12, 196, { size: 20, weight: 800, color });
     ctx.font = `800 20px ${SANS}`;
     const lw = ctx.measureText(stateLabel).width;
-    if (agentLabel) text(agentLabel, 12 + lw + 8, 196, { size: 10, weight: 600, color: DIM });
+    const rot = !preview && snap && snap.rotation;
+    const who = agentLabel && rot && rot.count > 1 ? `${agentLabel}  ${rot.index + 1}/${rot.count}` : agentLabel;
+    if (who) text(who, 12 + lw + 8, 196, { size: 10, weight: 600, color: DIM });
 
     if (!preview && a.task_start && st !== "idle" && st !== "offline") {
       text(fmtDur(now() - a.task_start), W - 12, 196, { size: 14, weight: 700, font: MONO, align: "right", color: FG });
@@ -415,6 +417,12 @@
     alertRing(t);
   }
 
+  // The agent a short press of B acknowledges (same mark as the firmware).
+  function focusMark(cy) {
+    ctx.fillStyle = FG;
+    ctx.beginPath(); ctx.moveTo(1, cy - 5); ctx.lineTo(6, cy); ctx.lineTo(1, cy + 5); ctx.closePath(); ctx.fill();
+  }
+
   function viewAgents(t) {
     text("AGENTS", 12, 22, { size: 13, weight: 800, color: DIM });
     const names = agentList();
@@ -429,6 +437,7 @@
       const y = 32 + i * (cardH + 8);
       rrect(8, y, W - 16, cardH, 10); ctx.fillStyle = "#15181d"; ctx.fill();
       ctx.fillStyle = COLORS[a.state]; rrect(8, y, 5, cardH, 2.5); ctx.fill();
+      if (snap && name === snap.focus) focusMark(y + cardH / 2);
       text(label(name), 22, y + 22, { size: 14, weight: 800 });
       text(LABELS[a.state], W - 20, y + 22, { size: 12, weight: 800, color: COLORS[a.state], align: "right" });
       ctx.font = `400 12px ${MONO}`;
@@ -460,6 +469,7 @@
       const base = y + rowH / 2 + 4;
       ctx.fillStyle = COLORS[a.state];
       ctx.beginPath(); ctx.arc(16, base - 4, 4, 0, Math.PI * 2); ctx.fill();
+      if (snap && name === snap.focus) focusMark(base - 4);
       text(label(name), 26, base, { size: 11, weight: 800, color: a.state === "offline" ? DIM : FG });
       text(SHORT[a.state], 100, base, { size: 11, weight: 800, color: COLORS[a.state] });
       const busy = a.task_start && a.state !== "idle" && a.state !== "offline";
@@ -731,7 +741,7 @@
   }
 
   // ---------- controls ----------
-  function press(btn, el) {
+  function press(btn, el, all = false) {
     el.classList.add("pressed"); setTimeout(() => el.classList.remove("pressed"), 120);
     ensureAudio();
     if (btn === "A") {
@@ -739,8 +749,12 @@
       view = pages[(pages.indexOf(view) + 1) % pages.length];
       return;
     }
-    post("api/button", { button: "B" }).then((r) => {
-      toast = { text: r.action === "ack" ? "OK, got it" : "yum! +energy", until: now() + 1.4 };
+    // Short press: the agent on screen; long press (or Shift+B): every agent.
+    const focus = snap && snap.focus;
+    const body = all ? { button: "B", all: true } : { button: "B", agent: focus || undefined };
+    post("api/button", body).then((r) => {
+      const texts = { ack: `OK: ${label(focus)}`, ack_all: "all clear", feed: "yum! +energy" };
+      toast = { text: texts[r.action] || "ok", until: now() + 1.4 };
     }).catch(() => { toast = { text: "no daemon", until: now() + 1.4 }; });
   }
 
@@ -752,11 +766,25 @@
 
   const btnA = document.getElementById("btnA"), btnB = document.getElementById("btnB");
   btnA.addEventListener("click", () => press("A", btnA));
-  btnB.addEventListener("click", () => press("B", btnB));
+  // B: a press shorter than 0.8 s acknowledges the agent on screen, a longer one all of them.
+  let bDown = 0;
+  btnB.addEventListener("pointerdown", () => { bDown = performance.now(); });
+  btnB.addEventListener("pointerup", () => {
+    if (!bDown) return;
+    const long = performance.now() - bDown >= 800;
+    bDown = 0;
+    press("B", btnB, long);
+  });
+  btnB.addEventListener("pointerleave", () => { bDown = 0; });
+  btnB.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " " || e.key === "b" || e.key === "B") {
+      e.preventDefault(); press("B", btnB, e.shiftKey);
+    } else if (e.key === "a" || e.key === "A") press("A", btnA);
+  });
   document.addEventListener("keydown", (e) => {
-    if (e.target.closest("input, textarea")) return;
+    if (e.target.closest("input, textarea") || e.target === btnB) return;
     if (e.key === "a" || e.key === "A") press("A", btnA);
-    if (e.key === "b" || e.key === "B") press("B", btnB);
+    if (e.key === "b" || e.key === "B") press("B", btnB, e.shiftKey);
   });
 
   document.getElementById("demo").addEventListener("click", () => {
@@ -808,6 +836,8 @@
   let config = null, catalog = [];
   const pickEl = document.getElementById("pick"), presetsEl = document.getElementById("presets");
   const pickNote = document.getElementById("pickNote");
+  const rotateBox = document.getElementById("rotate");
+  rotateBox.addEventListener("change", () => saveConfig({ rotate: rotateBox.checked }));
 
   async function loadConfig() {
     try {
@@ -892,6 +922,7 @@
       };
       pickEl.appendChild(b);
     }
+    rotateBox.checked = config.rotate !== false;
     pickNote.textContent = auto
       ? "自动模式：哪个 Agent 有活动会话就显示哪个，全部空闲时显示 OFFLINE。"
       : `已选 ${config.agents.length} 个。超过 2 个时顶栏用缩写，超过 3 个时列表页改为紧凑行。`;

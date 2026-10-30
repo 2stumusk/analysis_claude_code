@@ -4,7 +4,7 @@ Routes
   POST /hook/<agent>   hook payload (JSON body); optional ?event=<name>
   GET  /api/state      current snapshot
   GET  /api/stream     the same snapshot as Server-Sent Events, pushed on change
-  POST /api/button     {"button": "B"} acknowledge alerts, or feed the pet
+  POST /api/button     {"button": "B", "agent": id | "all": true} acknowledge, or feed the pet
   GET  /api/config     agents, pages and weather city; POST to change them
   GET  /api/agents     every supported agent with its hook config
   POST /api/demo       play a scripted demo session
@@ -54,7 +54,7 @@ class App:
         self.device = None  # set by device.SerialLink while a board is connected
         self.config_path = config_path
         self.config = {"mode": "custom", "agents": list(registry.DEFAULT_AGENTS),
-                       "pages": list(PAGES), "city": None}
+                       "pages": list(PAGES), "city": None, "rotate": True}
         self.weather_factory = weather_factory
         self.weather = None
         if config_path and os.path.exists(config_path):
@@ -80,6 +80,8 @@ class App:
             pages = [p for p in PAGES if p in cfg["pages"]]
             if pages:
                 self.config["pages"] = pages
+        if isinstance(cfg.get("rotate"), bool):
+            self.config["rotate"] = cfg["rotate"]
         if "city" in cfg and (cfg["city"] is None or isinstance(cfg["city"], str)):
             self.config["city"] = (cfg["city"] or "").strip()[:60] or None
 
@@ -143,10 +145,16 @@ class App:
         self.notify()
         return ev
 
-    def button(self, name):
+    def button(self, name, agent=None, everyone=False):
+        """Button B: acknowledge `agent` (the one on screen), or every agent
+        with `everyone` (long press); feed the pet when there was nothing to clear."""
         if name != "B":
             return "none"
-        action = "ack" if self.tracker.ack() else "feed"
+        if everyone:
+            acted = self.tracker.ack()
+        else:
+            acted = self.tracker.ack(agent or self.snapshot()["focus"])
+        action = ("ack_all" if everyone else "ack") if acted else "feed"
         if action == "feed":
             self.pet.feed()
         self.notify()
@@ -160,7 +168,7 @@ class App:
 
     def snapshot(self):
         shown = self.shown_agents()
-        snap = self.tracker.snapshot(shown)
+        snap = self.tracker.snapshot(shown, rotate=self.config["rotate"])
         for name, entry in snap["agents"].items():
             info = registry.describe(name)
             entry["label"], entry["abbr"] = info["label"], info["abbr"]
@@ -261,7 +269,9 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             body = {}
         if url.path == "/api/button":
-            return self._json(200, {"action": self.app.button(str(body.get("button", "")))})
+            agent = body.get("agent") if isinstance(body.get("agent"), str) else None
+            return self._json(200, {"action": self.app.button(str(body.get("button", "")), agent,
+                                                              bool(body.get("all")))})
         if url.path == "/api/config":
             return self._json(200, self.app.set_config(body))
         if url.path == "/api/demo":

@@ -175,6 +175,48 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(len(self.done), 1)
 
 
+class RotationAndAckTest(unittest.TestCase):
+    def setUp(self):
+        self.clock = Clock()
+        self.t = Tracker(clock=self.clock)
+
+    def test_busy_agents_take_turns(self):
+        for agent in ("claude", "codex", "kimi"):
+            self.t.handle(agent, ev("UserPromptSubmit", sid=agent))
+        seen = []
+        for _ in range(3):
+            snap = self.t.snapshot(["claude", "codex", "kimi"])
+            seen.append(snap["focus"])
+            self.assertEqual(snap["rotation"]["count"], 3)
+            self.clock.t += core.ROTATE_SECONDS
+        self.assertEqual(sorted(seen), ["claude", "codex", "kimi"])
+        off = self.t.snapshot(["claude", "codex", "kimi"], rotate=False)
+        self.assertIsNone(off["rotation"])
+
+    def test_alerts_stop_the_rotation(self):
+        for agent in ("claude", "codex"):
+            self.t.handle(agent, ev("UserPromptSubmit", sid=agent))
+        self.t.handle("kimi", ev("Notification", sid="k", notification_type="permission_prompt"))
+        for _ in range(3):
+            snap = self.t.snapshot(["claude", "codex", "kimi"])
+            self.assertEqual((snap["focus"], snap["rotation"]), ("kimi", None))
+            self.clock.t += core.ROTATE_SECONDS
+
+    def test_ack_one_agent_moves_to_the_next_alert(self):
+        self.t.handle("claude", ev("Notification", sid="c", notification_type="permission_prompt"))
+        self.clock.t += 1
+        self.t.handle("codex", ev("Notification", sid="x", notification_type="permission_prompt"))
+        show = ["claude", "codex"]
+        self.assertEqual(self.t.snapshot(show)["focus"], "codex")  # most recent alert first
+        self.assertTrue(self.t.ack("codex"))
+        snap = self.t.snapshot(show)
+        self.assertEqual((snap["focus"], snap["agents"]["codex"]["alert"], snap["agents"]["claude"]["alert"]),
+                         ("claude", False, True))
+        self.assertFalse(self.t.ack("codex"))  # nothing left to clear there
+        self.assertTrue(self.t.ack())          # long press: everyone
+        self.assertFalse(self.t.snapshot(show)["agents"]["claude"]["alert"])
+
+
 class IdentifyTest(unittest.TestCase):
     def test_rules(self):
         idf = registry.identify
@@ -220,11 +262,12 @@ class ConfigTest(unittest.TestCase):
             app.handle_hook("gemini", ev("BeforeAgent"))
             snap = app.snapshot()
             self.assertEqual(snap["order"], ["gemini", "grok"])
-            self.assertEqual(snap["focus"], "grok" if snap["agents"]["grok"]["last"] > snap["agents"]["gemini"]["last"] else "gemini")
+            self.assertIn(snap["focus"], ("gemini", "grok"))  # both busy: the face rotates
+            self.assertEqual(snap["rotation"]["count"], 2)
             again = App(usage=False, config_path=path)
             self.assertEqual(again.config, {"mode": "auto", "agents": ["qwen", "kimi"],
                                             "pages": ["face", "clock", "weather", "agents", "stats"],
-                                            "city": None})
+                                            "city": None, "rotate": True})
 
     def test_hidden_agents_still_tracked(self):
         app = App(usage=False)
@@ -367,6 +410,23 @@ class ServerTest(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             opener.open(r, timeout=3)
         self.assertEqual(cm.exception.code, 400)
+
+    def test_button_targets_one_agent_or_all(self):
+        self.req("/hook/kimi", ev("Notification", sid="bk", notification_type="permission_prompt"))
+        self.req("/hook/gemini", ev("Notification", sid="bg", notification_type="permission_prompt"))
+        self.app.set_config({"agents": ["kimi", "gemini"]})
+        try:
+            _, body = self.req("/api/button", {"button": "B", "agent": "kimi"})
+            self.assertEqual(json.loads(body)["action"], "ack")
+            agents = json.loads(self.req("/api/state")[1])["agents"]
+            self.assertEqual((agents["kimi"]["alert"], agents["gemini"]["alert"]), (False, True))
+            _, body = self.req("/api/button", {"button": "B", "all": True})
+            self.assertEqual(json.loads(body)["action"], "ack_all")
+            self.assertFalse(json.loads(self.req("/api/state")[1])["agents"]["gemini"]["alert"])
+        finally:
+            self.req("/hook/kimi", ev("SessionEnd", sid="bk"))
+            self.req("/hook/gemini", ev("SessionEnd", sid="bg"))
+            self.app.set_config({"agents": ["claude", "codex"]})
 
     def test_hook_bridge_forwards_and_stays_silent(self):
         bridge = os.path.join(ROOT, "hooks", "hook_bridge.py")

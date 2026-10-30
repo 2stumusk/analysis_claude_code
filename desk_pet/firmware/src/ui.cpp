@@ -469,7 +469,15 @@ void Ui::viewFace(Gfx& g, const Model& m, float now) const {
   const char* label = stateLabel(st);
   g.text(label, 12, 196, Font::Title, color);
   int lw = g.textWidth(label, Font::Title);
-  if (a && (previewing || st != State::Offline)) g.text(a->label, 12 + lw + 8, 196, Font::Small, DIM);
+  if (a && (previewing || st != State::Offline)) {
+    char who[40];
+    if (!previewing && m.rot_count > 1) {
+      snprintf(who, sizeof(who), "%s  %d/%d", a->label, m.rot_index + 1, m.rot_count);
+    } else {
+      snprintf(who, sizeof(who), "%s", a->label);
+    }
+    g.text(who, 12 + lw + 8, 196, Font::Small, DIM);
+  }
 
   char buf[96];
   if (!previewing && a && a->elapsed >= 0 && busy(st)) {
@@ -567,6 +575,7 @@ void Ui::viewAgents(Gfx& g, const Model& m, float now) const {
     int y1 = y + (compact ? 19 : 24), y2 = y + (compact ? 37 : 46), y3 = y + (compact ? 54 : 68);
     g.fillRoundRect(8, y, W - 16, cardH, 10, CARD);
     g.fillRoundRect(8, y, 5, cardH, 2, c);
+    if (i == m.focus) g.fillTriangle(1, y + cardH / 2 - 5, 6, y + cardH / 2, 1, y + cardH / 2 + 5, FG);
     g.text(a.label, 22, y1, Font::Label, FG);
     g.text(stateLabel(a.state), W - 20, y1, Font::Label, c, Align::Right);
     const char* detail = a.detail[0] ? a.detail
@@ -601,6 +610,7 @@ void Ui::agentRows(Gfx& g, const Model& m, float now) const {
     if (a.alert) g.fillRect(6, y, W - 12, rowH, blend(colorOf(State::Waiting), BG, 0.35f + 0.35f * sinf(now * 6)));
     int base = y + rowH / 2 + 4;
     g.fillCircle(16, base - 4, 4, colorOf(a.state));
+    if (i == m.focus) g.fillTriangle(1, base - 9, 6, base - 4, 1, base + 1, FG);
     g.text(a.label, 26, base, Font::Small, a.state == State::Offline ? DIM : FG);
     g.text(stateShort(a.state), 106, base, Font::Small, colorOf(a.state));
     bool timed = a.elapsed >= 0 && busy(a.state);

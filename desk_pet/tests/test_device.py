@@ -149,7 +149,7 @@ class SerialLinkTest(unittest.TestCase):
         path = os.ttyname(slave)
         app = busy_app()
         pressed = []
-        app.button = lambda name: pressed.append(name) or "ack"
+        app.button = lambda *args: pressed.append(args) or "ack"
         old = device.has_pyserial
         device.has_pyserial = lambda: False  # exercise the termios path
         link = SerialLink(app, path, log=lambda msg: None)
@@ -163,8 +163,8 @@ class SerialLinkTest(unittest.TestCase):
             frame = self.read_frame(master)
             self.assertEqual([a["id"] for a in frame["a"]], ["claude", "codex"])
 
-            os.write(master, b'{"btn":"B"}\n')
-            self.wait_for(lambda: pressed == ["B"])
+            os.write(master, b'{"btn":"B","agent":"codex"}\n{"btn":"B","all":1}\n')
+            self.wait_for(lambda: pressed == [("B", "codex", False), ("B", None, True)])
 
             app.handle_hook("claude", ev("Stop", "c"))  # state change: sent before the heartbeat
             self.wait_for(lambda: self.read_frame(master)["a"][0]["s"] == "done")

@@ -72,6 +72,7 @@ DUPLICATE_STOP = 3      # a second Stop this soon after the first is the same tu
 WAIT_GRACE = 1.5        # auto-approved requests resolve within this window
 BUSY_STALE = 20 * 60    # a busy session with no events for this long is idle
 SESSION_STALE = 60 * 60  # an idle session with no events for this long is gone
+ROTATE_SECONDS = 6       # with several agents busy, the face moves on this often
 DETAIL_MAX = 48
 
 
@@ -237,14 +238,16 @@ class Tracker:
         s.set(state, "", now)
         return state, duration, tools
 
-    def ack(self):
-        """Button B: clear finished faces and silence pending alerts.
+    def ack(self, agent=None):
+        """Button B: clear finished faces and silence pending alerts, for one
+        agent or (agent=None) for all of them.
 
         Returns True when there was something to acknowledge."""
         now = self.clock()
         acted = False
         with self.lock:
-            for sessions in self.agents.values():
+            groups = [self.agents.get(agent, {})] if agent else list(self.agents.values())
+            for sessions in groups:
                 for s in sessions.values():
                     eff = s.effective(now)
                     if eff == "waiting" and not s.muted:
@@ -254,8 +257,13 @@ class Tracker:
                         acted = True
         return acted
 
-    def snapshot(self, show=None):
-        """State of the agents in `show` (default: every agent seen so far)."""
+    def snapshot(self, show=None, rotate=True):
+        """State of the agents in `show` (default: every agent seen so far).
+
+        `focus` is the agent the face shows: unacknowledged alerts first, then
+        by state priority; when several agents are busy and nothing needs the
+        human, it rotates between them every ROTATE_SECONDS (`rotation` says
+        which of how many)."""
         now = self.clock()
         agents = {}
         with self.lock:
@@ -283,6 +291,12 @@ class Tracker:
                     "alert": state == "waiting" and not best.muted,
                     "last": round(max(s.last for s in sessions.values()), 3),
                 }
-        focus = max(agents, key=lambda a: (PRIORITY[agents[a]["state"]], agents[a]["last"] or 0),
+        order = list(agents)
+        focus = max(order, key=lambda a: (agents[a]["alert"], PRIORITY[agents[a]["state"]], agents[a]["last"] or 0),
                     default=None)
-        return {"focus": focus, "agents": agents}
+        rotation = None
+        busy = [a for a in order if agents[a]["state"] in BUSY]
+        if rotate and focus in busy and len(busy) > 1:
+            index = int(now // ROTATE_SECONDS) % len(busy)
+            focus, rotation = busy[index], {"index": index, "count": len(busy)}
+        return {"focus": focus, "agents": agents, "rotation": rotation}

@@ -4,7 +4,8 @@ The daemon sends one compact JSON frame per line (format in
 firmware/src/frame.h) whenever the screen would change, and at least every
 HEARTBEAT seconds so the device keeps its clock and knows the link is alive.
 The device sends {"hello": "deskpet", ...} until it hears from us, and
-{"btn": "B"} when button B is pressed.
+{"btn": "B", "agent": <id on screen>} when button B is pressed, with
+"all": 1 for a long press.
 
 pyserial is used when installed; otherwise POSIX termios (macOS / Linux).
 """
@@ -75,6 +76,8 @@ def device_frame(snap, now=None):
         "u": ({"o": usage["output"], "t": usage["input"] + usage["output"] + usage["cache_write"]}
               if usage else None),
         "pg": "".join(PAGE_LETTERS[p] for p in snap.get("pages") or PAGE_LETTERS if p in PAGE_LETTERS),
+        "ro": ([snap["rotation"]["index"], snap["rotation"]["count"]]
+               if snap.get("rotation") and snap.get("focus") in order else None),
         "w": weather_frame(snap.get("weather")),
     }
 
@@ -110,7 +113,7 @@ def frame_key(snap, frame):
     agents = [dict(a, e=a["e"] >= 0) for a in frame["a"]]
     pet = dict(frame["p"], lu=snap["pet"].get("levelup_at"), fd=snap["pet"].get("fed_at"))
     weather = dict(frame["w"], ag=None) if frame["w"] else None
-    return json.dumps([frame["f"], agents, pet, frame["u"], frame["pg"], weather], sort_keys=True)
+    return json.dumps([frame["f"], agents, pet, frame["u"], frame["pg"], weather, frame["ro"]], sort_keys=True)
 
 
 def encode(frame):
@@ -320,6 +323,7 @@ class SerialLink:
                 if not msg:
                     continue
                 if msg.get("btn") == "B":
-                    self.app.button("B")
+                    agent = msg.get("agent") if isinstance(msg.get("agent"), str) else None
+                    self.app.button("B", agent, bool(msg.get("all")))
                 elif msg.get("hello") == "deskpet":
                     last_key = None  # the device restarted: resend now

@@ -6,10 +6,12 @@
 //  "p":{"lv","xi","xs","en","md","tk","tl","er","lu","fd"},
 //  "u":{"o"(output tokens),"t"(total)} | null,
 //  "pg":"fcwas" (enabled pages: face clock weather agents stats),
+//  "ro":[index,count] | null (the face is rotating between busy agents),
 //  "w":{"st"(ok|stale|loading|error),"c"(city),"tx","k"(sky),"dy","t","fl","hu","ws",
 //       "hi","lo","p","ag"(minutes),"sm"(sample),"h":[[hour,temp,sky,pop,day]...]} | null}
 //
-// Device -> daemon lines are {"hello":"deskpet",...} and {"btn":"B"}.
+// Device -> daemon lines are {"hello":"deskpet",...} and {"btn":"B","agent":<id on screen>},
+// or {"btn":"B","all":1} for a long press.
 #pragma once
 
 #include "model.h"
