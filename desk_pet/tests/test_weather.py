@@ -96,6 +96,31 @@ class WeatherTest(unittest.TestCase):
         self.assertIn("weather_code", params["current"])
         self.assertEqual(w["city"], "Wuxi")
 
+    def test_chinese_name_retries_with_shi(self):
+        class Geo(FakeApi):
+            def __call__(self, url, params):
+                self.calls.append((url, params))
+                if params.get("name") == "无锡市":
+                    return {"results": [{"name": "Wuxi", "latitude": 31.5, "longitude": 120.25,
+                                         "feature_code": "PPLA2", "population": 3000000}]}
+                return {}
+        api = Geo()
+        self.assertEqual(OpenMeteo("无锡", get_json=api).locate()["name"], "Wuxi")
+        self.assertEqual([c[1]["name"] for c in api.calls], ["无锡", "无锡市"])
+        api.calls.clear()
+        self.assertEqual(OpenMeteo("Wuxi", get_json=api).queries(), ["Wuxi"])
+        with self.assertRaises(LookupError) as cm:
+            OpenMeteo("Wuxi", get_json=api).locate()
+        self.assertIn("pinyin", str(cm.exception))
+        self.assertEqual([c[1]["name"] for c in api.calls], ["Wuxi"])  # no 市 for latin names
+
+    def test_coordinates_in_city_field(self):
+        api = FakeApi()
+        place = OpenMeteo("31.49, 120.31", get_json=api).locate()
+        self.assertEqual((place["lat"], place["lon"]), (31.49, 120.31))
+        self.assertEqual(api.calls, [])
+        self.assertEqual(OpenMeteo("31.49，120.31").lat, 31.49)  # full-width comma
+
     def test_provider_unknown_city(self):
         with self.assertRaises(LookupError):
             OpenMeteo("Nowhere", get_json=FakeApi(geo={})).locate()

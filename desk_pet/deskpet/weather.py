@@ -9,6 +9,7 @@ docs/+page.svelte, docs/geocoding-api, code/docs/*-object.svx).
 """
 
 import json
+import re
 import threading
 import time
 import urllib.parse
@@ -18,6 +19,7 @@ GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 HOURS = 6        # slots in the hourly strip
 HOUR_STEP = 2    # hours between slots: covers the next 12 hours
+COORDS = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*[,，]\s*(-?\d+(?:\.\d+)?)\s*$")
 
 # WMO weather codes Open-Meteo emits -> (icon kind, English text, Chinese text).
 WMO = {
@@ -123,17 +125,32 @@ class OpenMeteo:
 
     def __init__(self, city=None, lat=None, lon=None, get_json=_get_json, clock=time.time):
         self.city, self.lat, self.lon = city, lat, lon
+        m = COORDS.match(city or "")
+        if m and lat is None and lon is None:  # "31.49,120.31" skips the name lookup
+            self.lat, self.lon = float(m.group(1)), float(m.group(2))
         self.get_json = get_json
         self.clock = clock
 
     def locate(self):
         if self.lat is not None and self.lon is not None:
             return {"name": self.city or "%.2f,%.2f" % (self.lat, self.lon), "lat": self.lat, "lon": self.lon}
-        found = self.get_json(GEOCODE_URL, {"name": self.city, "count": 10, "language": "en", "format": "json"})
-        place = pick_place(found.get("results") or [])
-        if not place:
-            raise LookupError("city not found: %s" % self.city)
-        return {"name": place["name"], "lat": place["latitude"], "lon": place["longitude"]}
+        for query in self.queries():
+            found = self.get_json(GEOCODE_URL, {"name": query, "count": 10, "language": "en", "format": "json"})
+            place = pick_place(found.get("results") or [])
+            if place:
+                return {"name": place["name"], "lat": place["latitude"], "lon": place["longitude"]}
+        raise LookupError("city not found: %s (try the English or pinyin name, e.g. Wuxi, "
+                          "or latitude,longitude)" % self.city)
+
+    def queries(self):
+        """Names to try. Open-Meteo matches queries of one or two characters
+        exactly only, so a two-character Chinese name like 无锡 misses an
+        entry stored as 无锡市; the 市 form is tried next."""
+        name = self.city.strip()
+        out = [name]
+        if any(ord(ch) > 0x2E80 for ch in name) and not name.endswith("市"):
+            out.append(name + "市")
+        return out
 
     def fetch(self, place):
         data = self.get_json(FORECAST_URL, {
