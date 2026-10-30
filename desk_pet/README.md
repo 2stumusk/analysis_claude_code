@@ -2,12 +2,13 @@
 
 一个放在桌上的小屏幕宠物：显示 Claude Code、Codex、Gemini、Qwen、Kimi、DeepSeek、Grok、Muse 这些 Agent 正在做什么、什么时候需要你，空闲时当时钟用，Agent 每完成一个任务它就成长一点。
 
-当前阶段：**电脑端守护进程 + 网页模拟器 + ESP32 固件**。固件支持 M5Stack Basic / Core2 和 CYD 三种板子，已编译通过，但还没在真机上跑过，详见 [firmware/README.md](firmware/README.md)。板子通过 USB 串口连接：`python3 -m deskpet --serial auto`。
+当前阶段：**电脑端守护进程 + 网页模拟器 + ESP32 固件**。固件支持 M5Stack Basic / Core2 和 CYD 三种板子，都已编译通过；M5Stack Basic 已在真机上跑通，Core2 和 CYD 还没实测，详见 [firmware/README.md](firmware/README.md)。板子通过 USB 串口连接：`python3 -m deskpet --serial auto`。
 
 ## 快速开始
 
 ```bash
-cd desk_pet
+git clone https://github.com/2stumusk/desk-pet.git
+cd desk-pet
 python3 -m deskpet --demo                    # 启动并播放一段演示会话
 python3 -m deskpet --agents china --demo     # 只显示国产三家
 python3 -m deskpet --city 无锡                # 打开天气页（城市会记住）

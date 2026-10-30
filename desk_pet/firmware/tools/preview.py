@@ -21,7 +21,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIRMWARE = os.path.dirname(HERE)
-sys.path.insert(0, os.path.dirname(FIRMWARE))  # desk_pet/, for the deskpet package
+sys.path.insert(0, os.path.dirname(FIRMWARE))  # repository root, for the deskpet package
 
 from deskpet.device import device_frame  # noqa: E402
 from deskpet.server import App  # noqa: E402

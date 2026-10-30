@@ -1,4 +1,4 @@
-"""USB serial link to the deskpet firmware (desk_pet/firmware).
+"""USB serial link to the deskpet firmware (firmware/).
 
 The daemon sends one compact JSON frame per line (format in
 firmware/src/frame.h) whenever the screen would change, and at least every

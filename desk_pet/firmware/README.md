@@ -46,7 +46,7 @@ Core2 和 CYD 还没有真机实测。
 
 ```bash
 pip install platformio
-cd desk_pet/firmware
+cd firmware
 pio run -e m5stack-core -t upload       # 换成你的板子：m5stack-core2 / cyd
 
 cd ..
