@@ -9,6 +9,7 @@
 - USB 自动连接，开机自启
 - Claude Code、Codex 的实时状态
 - 无锡的真实天气
+- 像素猫表情页（Claude Code 改代码时的敲键盘动画）
 
 Core2 和 CYD 还没有真机实测。
 
