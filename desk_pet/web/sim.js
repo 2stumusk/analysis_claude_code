@@ -34,6 +34,8 @@
   let audio = null;
   let lastAlertBeep = 0;
   let prev = { states: {}, alerts: {} };
+  let approvalSeen = { id: null, at: 0 };  // when the current request first showed
+  const ARM = 0.8;  // seconds before the buttons answer a new request (no accidental presses)
 
   // ---------- helpers ----------
   const now = () => Date.now() / 1000;
@@ -615,6 +617,60 @@
     });
   }
 
+  // ---------- permission request ----------
+  function approval() {
+    return snap && snap.approval && !preview ? snap.approval : null;
+  }
+  function armed(t) {
+    return approval() && t - approvalSeen.at >= ARM;
+  }
+  function wrapMono(str, maxW, maxLines) {
+    ctx.font = `400 12px ${MONO}`;
+    const lines = [];
+    let rest = str;
+    while (rest && lines.length < maxLines) {
+      let n = rest.length;
+      while (n > 1 && ctx.measureText(rest.slice(0, n)).width > maxW) n--;
+      lines.push(rest.slice(0, n));
+      rest = rest.slice(n);
+    }
+    if (rest && lines.length) lines[lines.length - 1] = lines[lines.length - 1].slice(0, -3) + "...";
+    return lines;
+  }
+  // Mirrors the firmware: request on top, a countdown, and what A / B / C do.
+  function viewApproval(t) {
+    const ap = approval();
+    const left = Math.max(0, ap.deadline - t);
+    const total = Math.max(1, ap.wait || 30);
+    const pulse = 0.55 + 0.45 * Math.sin(t * 6);
+    ctx.strokeStyle = COLORS.waiting; ctx.globalAlpha = pulse; ctx.lineWidth = 4;
+    rrect(2, 2, W - 4, H - 4, 10); ctx.stroke(); ctx.globalAlpha = 1;
+    text(`${ap.label} asks to use`, 14, 24, { size: 12, color: DIM, weight: 600 });
+    text(`${Math.ceil(left)}s`, W - 14, 24, { size: 14, weight: 700, font: MONO, align: "right",
+      color: left < 6 ? COLORS.error : FG });
+    text(fit(ap.tool, W - 28), 14, 52, { size: 20, weight: 800, color: COLORS.waiting });
+    rrect(12, 64, W - 24, 82, 8); ctx.fillStyle = "#15181d"; ctx.fill();
+    wrapMono(ap.detail || "", W - 44, 5).forEach((line, i) =>
+      text(line, 22, 84 + i * 15, { size: 12, font: MONO }));
+    bar(12, 156, W - 24, 4, left / total, left < 6 ? COLORS.error : COLORS.waiting);
+    const ready = armed(t);
+    [["DENY", 64, COLORS.error], ["ALLOW", 160, COLORS.done], ["LATER", 256, DIM]].forEach(([word, x, color]) => {
+      ctx.globalAlpha = ready ? 1 : 0.35;
+      rrect(x - 40, 180, 80, 30, 15); ctx.fillStyle = color; ctx.fill();
+      text(word, x, 200, { size: 13, weight: 800, color: BG, align: "center" });
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.moveTo(x - 6, 220); ctx.lineTo(x + 6, 220); ctx.lineTo(x, 228); ctx.fill();
+      ctx.globalAlpha = 1;
+    });
+  }
+  function answer(decision) {
+    const ap = approval();
+    const word = { allow: "allowed", deny: "denied", skip: "on computer" }[decision];
+    post("api/approval", { id: ap.id, decision }).then((r) => {
+      toast = { text: r.ok ? `${word}: ${ap.label}` : "already answered", until: now() + 1.6 };
+    }).catch(() => { toast = { text: "no daemon", until: now() + 1.4 }; });
+  }
+
   function enabledViews() {
     const pages = snap && snap.pages ? VIEWS.filter((v) => snap.pages.includes(v)) : VIEWS;
     return pages.length ? pages : VIEWS;
@@ -628,6 +684,12 @@
     ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
     const pages = enabledViews();
     if (!pages.includes(view)) view = pages[0];
+    if (approval()) {
+      viewApproval(t);
+      drawToast(t); updateLed(t); maybeBeep(t);
+      requestAnimationFrame(frame);
+      return;
+    }
     DRAW[view](t);
     if (view === "face") alertRing(t);
     // one dot per enabled page
@@ -685,6 +747,11 @@
   // React to transitions in new snapshots: jump to the face and chime.
   // Any agent finishing counts, even when another busy agent holds the face.
   function onTransitions(next) {
+    const apId = next.approval ? next.approval.id : null;
+    if (apId !== approvalSeen.id) {
+      approvalSeen = { id: apId, at: now() };
+      if (apId) play("waiting");
+    }
     let jump = false;
     for (const [name, a] of Object.entries(next.agents)) {
       if (a.alert && !prev.alerts[name]) jump = true;
@@ -744,6 +811,12 @@
   function press(btn, el, all = false) {
     el.classList.add("pressed"); setTimeout(() => el.classList.remove("pressed"), 120);
     ensureAudio();
+    if (approval()) {
+      // While a request is on screen the keys answer it; long B does nothing.
+      if (armed(now()) && !all) answer({ A: "deny", B: "allow", C: "skip" }[btn]);
+      return;
+    }
+    if (btn === "C") { toggleSound(); return; }
     if (btn === "A") {
       const pages = enabledViews();
       view = pages[(pages.indexOf(view) + 1) % pages.length];
@@ -765,7 +838,9 @@
   }
 
   const btnA = document.getElementById("btnA"), btnB = document.getElementById("btnB");
+  const btnC = document.getElementById("btnC");
   btnA.addEventListener("click", () => press("A", btnA));
+  btnC.addEventListener("click", () => press("C", btnC));
   // B: a press shorter than 0.8 s acknowledges the agent on screen, a longer one all of them.
   let bDown = 0;
   btnB.addEventListener("pointerdown", () => { bDown = performance.now(); });
@@ -782,9 +857,10 @@
     } else if (e.key === "a" || e.key === "A") press("A", btnA);
   });
   document.addEventListener("keydown", (e) => {
-    if (e.target.closest("input, textarea") || e.target === btnB) return;
+    if (e.target.closest("input:not([type=checkbox]), textarea, select") || e.target === btnB) return;
     if (e.key === "a" || e.key === "A") press("A", btnA);
     if (e.key === "b" || e.key === "B") press("B", btnB, e.shiftKey);
+    if (e.key === "c" || e.key === "C") press("C", btnC);
   });
 
   document.getElementById("demo").addEventListener("click", () => {
@@ -792,12 +868,14 @@
     post("api/demo", {}).catch(() => setConn(false));
   });
   const soundBtn = document.getElementById("sound");
-  soundBtn.addEventListener("click", () => {
-    ensureAudio(); soundOn = !soundOn;
+  soundBtn.addEventListener("click", () => { ensureAudio(); toggleSound(); });
+  function toggleSound() {
+    soundOn = !soundOn;
     soundBtn.textContent = "声音：" + (soundOn ? "开" : "关");
     soundBtn.setAttribute("aria-pressed", String(soundOn));
     if (soundOn) play("done");
-  });
+    toast = { text: soundOn ? "sound on" : "muted", until: now() + 1.2 };
+  }
 
   const chipsEl = document.getElementById("preview");
   function renderChips() {
@@ -838,6 +916,19 @@
   const pickNote = document.getElementById("pickNote");
   const rotateBox = document.getElementById("rotate");
   rotateBox.addEventListener("change", () => saveConfig({ rotate: rotateBox.checked }));
+  const approvalsBox = document.getElementById("approvals"), waitSel = document.getElementById("approvalWait");
+  const approvalNote = document.getElementById("approvalNote");
+  approvalsBox.addEventListener("change", () => saveConfig({ approvals: approvalsBox.checked }));
+  waitSel.addEventListener("change", () => saveConfig({ approval_wait: Number(waitSel.value) }));
+  function renderApprovals() {
+    approvalsBox.checked = !!config.approvals;
+    waitSel.value = String(config.approval_wait || 30);
+    waitSel.disabled = !config.approvals;
+    approvalNote.textContent = config.approvals
+      ? "只在桌宠 USB 连着（或本页开着）时生效。限时内没按键、按 C、或设备断开，都会退回电脑上原来的确认框。" +
+        "改过 hooks 的话要重新复制下方 Claude Code / Codex 的配置（PermissionRequest 超时改成了 90 秒），Codex 还要在 /hooks 里重新信任。"
+      : "关闭时权限请求照常只在电脑上确认，桌宠只提醒。";
+  }
 
   async function loadConfig() {
     try {
@@ -923,6 +1014,7 @@
       pickEl.appendChild(b);
     }
     rotateBox.checked = config.rotate !== false;
+    renderApprovals();
     pickNote.textContent = auto
       ? "自动模式：哪个 Agent 有活动会话就显示哪个，全部空闲时显示 OFFLINE。"
       : `已选 ${config.agents.length} 个。超过 2 个时顶栏用缩写，超过 3 个时列表页改为紧凑行。`;

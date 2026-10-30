@@ -38,6 +38,7 @@ const uint16_t kStateColor[] = {
 uint16_t colorOf(State s) { return kStateColor[(int)s]; }
 
 const float kPi = 3.14159265f;
+const float kApprovalArm = 0.8f;  // seconds; same as ARM in web/sim.js
 
 float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -223,6 +224,15 @@ void Ui::update(const Model& m, float now) {
 
   if (!m.connected) return;
 
+  if (m.approval.active && strcmp(m.approval.id, approval_id_) != 0) {
+    snprintf(approval_id_, sizeof(approval_id_), "%s", m.approval.id);
+    approval_seen_ = now;
+    sound_ = Sound::Waiting;
+    last_alert_beep_ = now;
+  } else if (!m.approval.active) {
+    approval_id_[0] = 0;
+  }
+
   // Chime on finishes and new alerts; jump to the face for the ones that matter.
   bool jump = false;
   for (int i = 0; i < m.count; i++) {
@@ -264,6 +274,17 @@ void Ui::update(const Model& m, float now) {
   } else {
     last_alert_beep_ = -100;
   }
+}
+
+bool Ui::approvalShown(const Model& m, float now) const {
+  if (!m.approval.active || !m.connected || preview_ != State::Count) return false;
+  int64_t daemonNow = m.epoch + (int64_t)(now - m.rx_time);
+  return daemonNow < m.approval.deadline;
+}
+
+bool Ui::approvalArmed(const Model& m, float now) const {
+  return approvalShown(m, now) && strcmp(m.approval.id, approval_id_) == 0 &&
+         now - approval_seen_ >= kApprovalArm;
 }
 
 void Ui::nextView(const Model& m) {
@@ -830,9 +851,58 @@ void Ui::viewWeather(Gfx& g, const Model& m, float now) const {
   }
 }
 
+// Mirrors viewApproval in web/sim.js: what is asked, a countdown, and what each key does.
+void Ui::viewApproval(Gfx& g, const Model& m, float now) const {
+  const Approval& ap = m.approval;
+  float left = (float)(ap.deadline - m.epoch) - (now - m.rx_time);
+  if (left < 0) left = 0;
+  uint16_t warn = colorOf(State::Waiting);
+  float pulse = 0.55f + 0.45f * sinf(now * 6);
+  for (int i = 0; i < 4; i++) {
+    g.drawRoundRect(2 + i, 2 + i, W - 4 - 2 * i, H - 4 - 2 * i, 10 - i, blend(warn, BG, pulse));
+  }
+  char buf[132];
+  snprintf(buf, sizeof(buf), "%s asks to use", ap.label);
+  g.text(buf, 14, 24, Font::Small, DIM);
+  snprintf(buf, sizeof(buf), "%ds", (int)ceilf(left));
+  g.text(buf, W - 14, 24, Font::MonoBold, left < 6 ? colorOf(State::Error) : FG, Align::Right);
+  g.text(fit(g, ap.tool, W - 28, Font::Title, buf, sizeof(buf)), 14, 52, Font::Title, warn);
+
+  // The command / file / URL, wrapped on character boundaries in the mono font.
+  g.fillRoundRect(12, 62, W - 24, 90, 8, CARD);
+  int cw = g.textWidth("M", Font::Mono);
+  int per = cw > 0 ? (W - 44) / cw : 26;
+  if (per > (int)sizeof(buf) - 1) per = sizeof(buf) - 1;
+  int len = (int)strlen(ap.detail);
+  for (int line = 0, at = 0; line < 5 && at < len; line++, at += per) {
+    int n = len - at < per ? len - at : per;
+    snprintf(buf, sizeof(buf), "%.*s", n, ap.detail + at);
+    if (line == 4 && at + n < len && n >= 3) memcpy(buf + n - 3, "...", 3);
+    g.text(buf, 22, 80 + line * 16, Font::Mono, FG);
+  }
+  bar(g, 12, 158, W - 24, 4, left / (float)ap.wait, left < 6 ? colorOf(State::Error) : warn);
+
+  float a = approvalArmed(m, now) ? 1.0f : 0.35f;
+  struct Key { const char* word; int x; uint16_t c; };
+  const Key three[] = {{"DENY", 64, colorOf(State::Error)}, {"ALLOW", 160, colorOf(State::Done)},
+                       {"LATER", 256, DIM}};
+  const Key two[] = {{"DENY", 80, colorOf(State::Error)}, {"ALLOW", 240, colorOf(State::Done)}};
+  const Key* keys = halves_ ? two : three;
+  int n = halves_ ? 2 : 3;
+  for (int i = 0; i < n; i++) {
+    uint16_t c = blend(keys[i].c, BG, a);
+    g.fillRoundRect(keys[i].x - 40, 176, 80, 30, 15, c);
+    g.text(keys[i].word, keys[i].x, 196, Font::Label, BG, Align::Center);
+    g.fillTriangle(keys[i].x - 6, 214, keys[i].x + 6, 214, keys[i].x, 222, c);
+  }
+  if (halves_) g.text("hold anywhere: decide on computer", W / 2, 230, Font::Tiny, DIM, Align::Center);
+}
+
 void Ui::draw(Gfx& g, const Model& m, float now) const {
   g.fillRect(0, 0, W, H, BG);
-  switch (view_) {
+  if (approvalShown(m, now)) {
+    viewApproval(g, m, now);
+  } else switch (view_) {
     case View::Face: viewFace(g, m, now); break;
     case View::Clock: viewClock(g, m, now); break;
     case View::Weather: viewWeather(g, m, now); break;
@@ -843,7 +913,7 @@ void Ui::draw(Gfx& g, const Model& m, float now) const {
   uint8_t pages = m.pages ? m.pages : kAllPages;
   int n = 0, at = 0;
   for (int i = 0; i < (int)View::Count; i++) n += (pages >> i) & 1;
-  for (int i = 0; i < (int)View::Count; i++) {
+  for (int i = 0; i < (int)View::Count && !approvalShown(m, now); i++) {
     if (!((pages >> i) & 1)) continue;
     g.fillCircle(W / 2 - (n - 1) * 6 + at * 12, H - 4, 2, i == (int)view_ ? FG : FAINT);
     at++;

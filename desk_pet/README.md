@@ -64,6 +64,9 @@ python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stde
 | A | 切换页面：表情 → 时钟 → 天气 → Agent 列表 → 宠物（只在勾选的页面之间切换） |
 | B | 确认表情页上**这一个** Agent 的提醒（停止闪烁 / 清掉 DONE），画面会跳到下一个在等你的 Agent；它没什么可确认时就喂食 |
 | 长按 B | 一次确认**所有** Agent（网页上也可以按 Shift+B） |
+| C | 声音开关 |
+
+权限请求出现在屏幕上时（要先打开，见下面"按键批准权限"），三个键临时变成 **A 拒绝 / B 允许 / C 交给电脑**。
 
 | 状态 | 触发事件（各家同义事件已统一） | 表情 |
 |---|---|---|
@@ -94,6 +97,35 @@ python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stde
   - 设备会把 Agent 名一起发给电脑，所以确认的就是你看到的那个，不会因为刚好轮换而确认错。
 - **其他 Agent**：顶栏每个一个彩色圆点，需要你时会闪；按 A 切到列表页可以同时看到全部。
 
+## 按键批准权限
+
+Claude Code 或 Codex 要你批准一个操作（跑命令、改文件……）时，可以直接在桌宠上按键决定。
+
+- **默认关闭**：在网页"按键批准权限"里勾选才生效，设置记在 `config.json` 的 `approvals`。只在桌宠 USB 连着、或模拟器网页开着时起作用。
+- **屏幕显示**：哪个 Agent、什么工具、具体命令或文件（最多 120 字符），以及倒计时。
+- **按键**：A 拒绝，B 允许，C 交给电脑。触屏板（CYD）是左半边拒绝、右半边允许、长按任意处交给电脑。
+  - 请求刚出现的 0.8 秒内按键无效，防止你正好在按别的键时误批。
+  - 长按任何键都不会"允许"。
+- **退回电脑**：限时内（默认 30 秒，可选 10–60 秒）没按、按了 C、设备拔掉、或者你在电脑上已经处理了，都会把请求还给 Agent，电脑上照常弹出确认框。
+- **不会批错**：设备回传请求编号，守护进程只接受正在等待的那一个；编号每次启动都不同。
+- **范围**：只对 Claude Code（包括接 DeepSeek / Kimi / 千问 API 的 Claude Code）和 Codex 生效，这两家的返回格式查过官方文档 / 源码。Grok、Gemini、Kimi Code 等仍然只提醒、不代批。
+- **规则仍然有效**：按"允许"后，你在 Claude Code 里配的 deny 规则照样生效（官方文档说明）。
+
+打开前需要**更新 hooks 配置**：`PermissionRequest` 的超时从 5 秒改成了 90 秒，否则 Agent 等不到按键。用 `python3 -m deskpet hooks claude`（或 `codex`）重新生成并替换；Codex 改完要重启并在 `/hooks` 里重新信任。
+
+工作方式：`hook_bridge.py` 收到 `PermissionRequest` 后带 `?wait=1` 请求守护进程并等待，拿到决定后输出：
+
+```json
+{"hookSpecificOutput": {"hookEventName": "PermissionRequest",
+  "decision": {"behavior": "deny", "message": "Denied from the deskpet device."}}}
+```
+
+- 这个格式同时符合 Claude Code hooks 文档的 "PermissionRequest decision control"，以及 Codex 源码里的输出 schema（`codex-rs/hooks/schema/generated/permission-request.command.output.schema.json`）。
+- 不发送 `interrupt`、`updatedInput`、`updatedPermissions`：Codex 遇到这几个字段会按拒绝处理。
+- 输出由 bridge 自己拼，不转发守护进程的文字。没有决定时什么都不输出。
+
+还没在真机上验证的一点：Claude Code 文档没写 hook 执行期间电脑上的确认框是否同时出现。如果同时出现，你在电脑上点了，桌宠上的请求也会自动消失（Agent 的下一个事件会释放它）。
+
 ## 页面与天气
 
 - **选页面**：在网页"页面与天气"里勾选，或用 `--pages face,clock,weather`。A 键只在勾选的页面之间切换，至少保留一页。
@@ -109,11 +141,13 @@ python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stde
 ## 隐私与安全
 
 - 只监听 `127.0.0.1`。hook 内容里有你的 prompt 和命令，除非确定局域网可信，不要改成 `--host 0.0.0.0`。
-- 屏幕上只显示文件名、截断后的命令（≤48 字符），不保存 prompt。
+- 屏幕上只显示文件名、截断后的命令（≤48 字符；权限请求页 ≤120 字符），不保存 prompt。
 - 带外站 `Origin` 头的 POST 会被拒绝，防止任意网页伪造状态。
-- `hook_bridge.py` 不输出任何内容，并且始终以 0 退出，不会阻塞或影响 Agent。
+- `hook_bridge.py` 始终以 0 退出。唯一会输出内容的情况：你打开了"按键批准权限"，并且在设备上按了允许或拒绝。这时它输出上面那段固定格式的 JSON。其余情况都不输出，也不等待。
 
 ## 状态协议（v1）
+
+`approval` 在有权限请求等按键时是 `{"id", "agent", "label", "tool", "detail", "deadline", "wait"}`，否则为 `null`。
 
 `GET /api/state` 返回一个快照，`GET /api/stream` 用 SSE 在状态变化时推送同样的内容。`order` 是屏幕要显示的 Agent 顺序，`label` 和 `abbr` 由守护进程给出，以后新增 Agent 不用改固件。
 
@@ -134,7 +168,8 @@ python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stde
             "mood": "happy", "tasks_today": 5, "tools_today": 30, "errors_today": 0,
             "levelup_at": null, "fed_at": null},
   "usage": {"claude": {"date": "2026-10-26", "input": 0, "output": 0, "cache_read": 0,
-                       "cache_write": 0, "messages": 0}}
+                       "cache_write": 0, "messages": 0}},
+  "approval": null
 }
 ```
 
@@ -142,10 +177,11 @@ python3 -m deskpet hooks <agent>    # 输出这个 Agent 的 hooks 配置（stde
 
 | 接口 | 作用 |
 |---|---|
-| `POST /hook/<agent>` | hook 原文，可加 `?event=名字` |
+| `POST /hook/<agent>` | hook 原文，可加 `?event=名字`；`?wait=1` 时 `PermissionRequest` 会等按键，返回 `{"decision":"allow"/"deny"}` 或 `{}` |
 | `GET` / `POST /api/config` | 读取 / 修改模式和 Agent 列表 |
 | `GET /api/agents` | 每个 Agent 的接入配置 |
 | `POST /api/button {"button":"B"}` | 模拟 B 键 |
+| `POST /api/approval {"id","decision"}` | 回答正在等待的权限请求：`allow` / `deny` / `skip`（交给电脑） |
 | `POST /api/demo` | 播放演示 |
 
 ## 目录
@@ -156,6 +192,7 @@ deskpet/core.py     hook 事件 → 每个 Agent 的显示状态
 deskpet/pet.py      经验、等级、精力
 deskpet/usage.py    今日 Claude token 统计
 deskpet/server.py   HTTP 守护进程 + SSE + 模式配置
+deskpet/approvals.py  按键批准权限：挂起请求、等待决定
 deskpet/demo.py     演示脚本（走真实的 hook 处理流程，按所选 Agent 分配角色）
 deskpet/device.py   USB 串口：给固件发状态帧、自动找设备、接收按键
 deskpet/weather.py  天气：Open-Meteo 地理编码 + 预报，后台定时刷新
@@ -180,7 +217,6 @@ tests/              python3 -m unittest discover -s tests
 
 ## 下一步
 
-1. 真机实测固件（按键、声音、刷新率、CYD 屏幕方向），补上 Core2 的声音。
-2. 用设备按键批准 / 拒绝权限：Claude Code 的 `PermissionRequest` hook 可以返回决定。这个功能涉及安全，要做成显式开启。
-3. 兼容 [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy) 的 BLE 协议，让设备也能连 Claude 桌面版。
-4. 原创角色和 GIF 皮肤包。
+1. 真机实测固件（按键、声音、刷新率、CYD 屏幕方向、按键批准权限），补上 Core2 的声音。
+2. 兼容 [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy) 的 BLE 协议，让设备也能连 Claude 桌面版。
+3. 原创角色和 GIF 皮肤包。

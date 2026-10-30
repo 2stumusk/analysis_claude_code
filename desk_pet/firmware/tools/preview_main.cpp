@@ -76,7 +76,7 @@ std::string quoted(const char* s) {
 }
 
 State stateByName(const char* s) {
-  if (!strcmp(s, "-")) return State::Count;
+  if (!strcmp(s, "-") || !strcmp(s, "halves")) return State::Count;
   return parseState(s);
 }
 
@@ -108,6 +108,7 @@ int render(const char* metrics) {
     Ui ui;
     ui.seed(7);
     ui.setPreview(stateByName(fields[2]));
+    ui.setHalves(!strcmp(fields[2], "halves"));  // CYD-style two-key layout
     // Let the eyes settle the way they would on the device.
     for (float t = now - 3; t < now; t += 1.0f / 30) ui.update(m, t);
     ui.update(m, now);
@@ -160,7 +161,11 @@ int parse() {
                h.day ? 1 : 0);
       out += wbuf;
     }
-    out += "]]}";
+    out += "]]";
+    const Approval& ap = m.approval;
+    snprintf(wbuf, sizeof(wbuf), ",\"approval\":[%d,%d,%lld,%d,", ap.active ? 1 : 0, ap.agent,
+             (long long)ap.deadline, ap.wait);
+    out += wbuf + quoted(ap.id) + "," + quoted(ap.label) + "," + quoted(ap.tool) + "," + quoted(ap.detail) + "]}";
     puts(out.c_str());
   }
   return 0;

@@ -17,9 +17,11 @@
       <div class="buttons">
         <button class="hw" id="btnA" title="切换页面（键盘 A）"><span>A</span></button>
         <button class="hw" id="btnB" title="确认提醒 / 喂食（键盘 B）"><span>B</span></button>
+        <button class="hw" id="btnC" title="声音开关（键盘 C）"><span>C</span></button>
       </div>
     </div>
-    <p class="hint">A：切换页面　B：确认屏幕上这个 Agent / 喂食　长按 B 或 Shift+B：全部确认</p>
+    <p class="hint">A：切换页面　B：确认屏幕上这个 Agent / 喂食　长按 B 或 Shift+B：全部确认　C：声音<br>
+      权限请求出现时：A 拒绝　B 允许　C 交给电脑</p>
   </section>
 
   <aside class="panel">
@@ -39,6 +41,19 @@
       <div class="chips" id="pick"></div>
       <label class="check"><input type="checkbox" id="rotate"> 多个 Agent 同时忙时，表情页每 6 秒轮流显示</label>
       <p class="note" id="pickNote"></p>
+    </div>
+
+    <div class="group">
+      <h2>按键批准权限 <small>Claude Code / Codex</small></h2>
+      <label class="check"><input type="checkbox" id="approvals"> 权限请求先发到桌宠：A 拒绝 / B 允许 / C 交给电脑</label>
+      <div class="row wait">
+        <label for="approvalWait">等待按键</label>
+        <select id="approvalWait">
+          <option value="10">10 秒</option><option value="20">20 秒</option>
+          <option value="30">30 秒</option><option value="45">45 秒</option><option value="60">60 秒</option>
+        </select>
+      </div>
+      <p class="note" id="approvalNote"></p>
     </div>
 
     <div class="group">

@@ -350,6 +350,21 @@ bool parseFrame(const char* line, Model& m, float now) {
       }
     }
   }
+  Approval& ap = next.approval;
+  ap = Approval();
+  int an = doc->get(root, "ap");
+  if (an >= 0 && doc->at(an).type == T::Obj) {
+    doc->str(an, "id", ap.id, sizeof(ap.id));
+    doc->str(an, "l", ap.label, sizeof(ap.label));
+    doc->str(an, "t", ap.tool, sizeof(ap.tool));
+    doc->str(an, "d", ap.detail, sizeof(ap.detail));
+    int agent = (int)doc->num(an, "a", -1);
+    ap.agent = (agent >= 0 && agent < next.count) ? agent : -1;
+    ap.deadline = (int64_t)doc->num(an, "dl", 0);
+    ap.wait = (int)doc->num(an, "n", 30);
+    if (ap.wait < 1) ap.wait = 1;
+    ap.active = ap.id[0] != 0;
+  }
   next.connected = true;
   next.rx_time = now;
   m = next;

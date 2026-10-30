@@ -61,6 +61,18 @@ struct WeatherInfo {
   HourForecast hour[6];
 };
 
+// A permission request the daemon is holding for button A (deny) / B (allow) / C (later).
+struct Approval {
+  bool active = false;
+  char id[24] = "";
+  int agent = -1;        // index into agents, -1 = not shown
+  char label[10] = "";
+  char tool[21] = "";
+  char detail[124] = "";
+  int64_t deadline = 0;  // daemon unix time
+  int wait = 30;         // full wait, seconds (countdown bar)
+};
+
 struct Model {
   bool connected = false;
   float rx_time = 0;      // device seconds when the frame arrived
@@ -77,6 +89,7 @@ struct Model {
   int64_t usage_total = 0;
   uint8_t pages = kAllPages;
   WeatherInfo weather;
+  Approval approval;
 };
 
 State parseState(const char* s);

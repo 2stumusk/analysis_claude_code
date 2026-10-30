@@ -115,10 +115,16 @@ def bridge_command(agent, port, *extra):
     return " ".join(shlex.quote(p) for p in parts)
 
 
-def _json_hooks(events, command, timeout):
+# A PermissionRequest may wait for the device's buttons (deskpet/approvals.py,
+# at most 60 s), so its hook needs a longer timeout than the rest.
+APPROVAL_TIMEOUT = 90
+
+
+def _json_hooks(events, command, timeout, approval=False):
     hooks = {}
     for ev in events:
-        entry = {"hooks": [{"type": "command", "command": command, "timeout": timeout}]}
+        limit = APPROVAL_TIMEOUT if approval and ev == "PermissionRequest" else timeout
+        entry = {"hooks": [{"type": "command", "command": command, "timeout": limit}]}
         if ev in TOOL_EVENTS:
             entry = {"matcher": "*", **entry}
         hooks[ev] = [entry]
@@ -134,7 +140,8 @@ def hook_config(agent, port=7878):
     if agent in ("claude", "deepseek"):
         # Every event goes through the bridge so it can tell real Claude apart
         # from DeepSeek/Kimi/Qwen backends and from Grok, which runs these hooks too.
-        cfg = {"hooks": _json_hooks(CLAUDE_STYLE_EVENTS, bridge_command("claude", port), 5)}
+        cfg = {"hooks": _json_hooks(CLAUDE_STYLE_EVENTS, bridge_command("claude", port), 5,
+                                    approval=True)}
         notes = []
         if agent == "deepseek":
             notes.append("DeepSeek 没有自己的 CLI：按 DeepSeek 官方文档把 Claude Code 的 "
@@ -143,7 +150,7 @@ def hook_config(agent, port=7878):
             notes.append("走自建代理/路由时识别不到，可在 command 末尾加 `--as deepseek` 强制指定。")
         return "~/.claude/settings.json", json.dumps(cfg, indent=2), notes
     if agent == "codex":
-        cfg = {"hooks": _json_hooks(CODEX_EVENTS, bridge_command("codex", port), 5)}
+        cfg = {"hooks": _json_hooks(CODEX_EVENTS, bridge_command("codex", port), 5, approval=True)}
         return "~/.codex/hooks.json", json.dumps(cfg, indent=2), [
             "重启 Codex 后在 /hooks 里信任这些命令：未信任的用户级 hooks 会被静默跳过。",
             "较旧版本的 Codex 需要在 ~/.codex/config.toml 的 [features] 里打开 hooks（旧名 codex_hooks）。"]

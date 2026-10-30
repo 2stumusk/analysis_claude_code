@@ -29,6 +29,13 @@ class Ui {
   void seed(uint32_t s) { rng_ = s ? s : 1; }
   float eyesOpen() const { return blink_; }  // 1 = fully open
 
+  // Permission request: on screen until the daemon clears it or its deadline passes.
+  bool approvalShown(const Model& m, float now) const;
+  // Buttons answer it only after it has been visible a moment (no accidental presses).
+  bool approvalArmed(const Model& m, float now) const;
+  // Touch boards with two halves (CYD): DENY left, ALLOW right, hold for LATER.
+  void setHalves(bool halves) { halves_ = halves; }
+
   Sound takeSound();
   // LED colour for boards that have one; false = off.
   bool led(const Model& m, float now, uint16_t* color) const;
@@ -52,6 +59,7 @@ class Ui {
   void agentRows(Gfx& g, const Model& m, float now) const;
   void viewStats(Gfx& g, const Model& m, float now) const;
   void viewWeather(Gfx& g, const Model& m, float now) const;
+  void viewApproval(Gfx& g, const Model& m, float now) const;
 
   View view_ = View::Face;
   State preview_ = State::Count;
@@ -62,6 +70,9 @@ class Ui {
   char toast_[24] = {0};
   float toast_until_ = 0;
   uint32_t rng_ = 0x2545F491;
+  bool halves_ = false;
+  char approval_id_[24] = "";
+  float approval_seen_ = 0;
 
   // Transition tracking for chimes and jumping back to the face.
   char prev_ids_[kMaxAgents][12] = {};

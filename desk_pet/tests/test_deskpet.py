@@ -267,7 +267,8 @@ class ConfigTest(unittest.TestCase):
             again = App(usage=False, config_path=path)
             self.assertEqual(again.config, {"mode": "auto", "agents": ["qwen", "kimi"],
                                             "pages": ["face", "clock", "weather", "agents", "stats"],
-                                            "city": None, "rotate": True})
+                                            "city": None, "rotate": True,
+                                    "approvals": False, "approval_wait": 30})
 
     def test_hidden_agents_still_tracked(self):
         app = App(usage=False)

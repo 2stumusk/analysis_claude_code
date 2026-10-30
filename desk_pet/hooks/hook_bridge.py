@@ -10,8 +10,10 @@ the hook: the names of the parent processes (Grok also runs Claude Code's
 hooks), the host of ANTHROPIC_BASE_URL and ANTHROPIC_MODEL (Claude Code pointed
 at DeepSeek, Kimi or Qwen). No keys, tokens or full URLs are sent.
 
-It prints nothing and always exits 0, so it can never block or steer the agent:
-hook stdout may be read by the agent as instructions.
+It always exits 0 and prints nothing, with one exception: a PermissionRequest
+from Claude Code or Codex waits (up to the daemon's approval time) in case the
+desk pet's buttons decide it, and then prints only the fixed allow/deny output
+built here, never text from the daemon. Hook stdout may be read by the agent.
 """
 
 import json
@@ -22,6 +24,10 @@ import urllib.request
 from urllib.parse import urlparse
 
 INTERPRETERS = {"node", "bun", "deno", "python", "python3", "npx"}
+# Endpoints whose PermissionRequest hooks can be answered from the device.
+WAITERS = {"claude", "codex"}
+WAIT_TIMEOUT = 75  # the daemon holds a request for at most 60 s
+DENY_MESSAGE = "Denied from the deskpet device."
 GROK_EVENTS = {
     "session_ready": {"hook_event_name": "SessionStart"},
     "approval_required": {"hook_event_name": "Notification", "notification_type": "permission_prompt"},
@@ -87,6 +93,17 @@ def hints(forced):
     return h
 
 
+def hook_output(decision):
+    """PermissionRequest decision output, in the format both Claude Code and
+    Codex document; None unless decision is exactly 'allow' or 'deny'."""
+    if decision not in ("allow", "deny"):
+        return None
+    out = {"behavior": decision}
+    if decision == "deny":
+        out["message"] = DENY_MESSAGE
+    return {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": out}}
+
+
 def main(argv):
     if len(argv) < 2:
         return
@@ -124,16 +141,23 @@ def main(argv):
         if not isinstance(payload, dict):
             return
     payload["_deskpet"] = hints(forced)
+    wait = agent in WAITERS and payload.get("hook_event_name") == "PermissionRequest"
 
     req = urllib.request.Request(
-        "http://127.0.0.1:%s/hook/%s" % (port, agent),
+        "http://127.0.0.1:%s/hook/%s%s" % (port, agent, "?wait=1" if wait else ""),
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     # The daemon is local; never let a proxy setting route prompts elsewhere.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    opener.open(req, timeout=1.0).read()
+    body = opener.open(req, timeout=WAIT_TIMEOUT if wait else 1.0).read()
+    if wait:
+        reply = json.loads(body or b"{}")
+        out = hook_output(reply.get("decision") if isinstance(reply, dict) else None)
+        if out:
+            sys.stdout.write(json.dumps(out))
+            sys.stdout.flush()
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@
 //                          on GPIO26, RGB LED
 // A: next page (hold: sound on/off)  B: acknowledge the agent on screen, or feed
 // the pet (hold: acknowledge every agent)  C: sound on/off
+// While a permission request is on screen: A deny, B allow, C (or any hold)
+// leave it to the computer.
 #include <Arduino.h>
 #include <LGFX_AUTODETECT.hpp>
 #include <LovyanGFX.hpp>
@@ -204,8 +206,25 @@ void linkPoll() {
   }
 }
 
+// Answer the permission request on screen. Holding a key never allows.
+void onApproval(int b, float now) {
+  if (!ui.approvalArmed(model, now)) return;  // just appeared: ignore stray presses
+  const char* decision = b == kA ? "deny" : b == kB ? "allow" : "skip";
+  Serial.printf("{\"approval\":\"%s\",\"decision\":\"%s\"}\n", model.approval.id, decision);
+  char text[24];
+  snprintf(text, sizeof(text), "%s: %s",
+           b == kA ? "denied" : b == kB ? "allowed" : "on computer", model.approval.label);
+  ui.showToast(text, now);
+  model.approval.active = false;  // the daemon's next frame confirms it
+  play(Sound::Click);
+}
+
 void onButton(int b) {
   float now = nowSeconds();
+  if (ui.approvalShown(model, now)) {
+    onApproval(b, now);
+    return;
+  }
   if (b == kA) {
     ui.nextView(model);
     play(Sound::Click);
@@ -245,6 +264,7 @@ void setup() {
   lcd.setBrightness(160);
   lcd.fillScreen(TFT_BLACK);
   boardBegin();
+  ui.setHalves(kind != Kind::M5Basic && kind != Kind::M5Core2);
   prefs.begin("deskpet", false);
   muted = prefs.getBool("mute", false);
   ui.seed(esp_random());

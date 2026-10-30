@@ -189,6 +189,15 @@ def scene(agents, events, later=125, tweak=None, weather=None, pages=None):
     return device_frame(snap, now=time.time() + later)
 
 
+def held(agent, tool_name, tool_input, wait=30):
+    """A tweak that leaves a permission request held for the device's buttons."""
+    def tweak(app):
+        from deskpet.approvals import describe_request
+        app.config["approvals"] = True
+        app.approvals.open(agent, "c", tool_name, describe_request(tool_name, tool_input), wait)
+    return tweak
+
+
 def scenes():
     duo = ["claude", "codex"]
     start = [("claude", ev("SessionStart", "c", cwd="/work/shop-api")),
@@ -243,6 +252,11 @@ def scenes():
     yield "weather-off", "weather", "-", scene(duo, start)
     yield "clock-weather", "clock", "-", scene(duo, start, weather=sample_weather())
     yield "clock-3-pages", "clock", "-", scene(duo, start, weather=sample_weather(), pages=["face", "clock", "weather"])
+    cmd = {"command": "git push --force-with-lease origin feature/cart-discounts && npm run deploy:staging"}
+    yield "approval-bash", "face", "-", scene(duo, start, later=8, tweak=held("claude", "Bash", cmd))
+    yield "approval-codex-edit", "agents", "-", scene(duo, start, later=26, tweak=held(
+        "codex", "apply_patch", {"path": "/work/shop-api/src/cart/discounts.rs"}))
+    yield "approval-touch", "face", "halves", scene(duo, start, later=8, tweak=held("claude", "Bash", cmd))
 
 
 def main(argv=None):

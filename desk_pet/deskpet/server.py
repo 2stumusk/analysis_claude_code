@@ -7,6 +7,7 @@ Routes
   POST /api/button     {"button": "B", "agent": id | "all": true} acknowledge, or feed the pet
   GET  /api/config     agents, pages and weather city; POST to change them
   GET  /api/agents     every supported agent with its hook config
+  POST /api/approval   {"id", "decision": allow|deny|skip} answer a held permission request
   POST /api/demo       play a scripted demo session
   GET  /               web simulator
 """
@@ -20,8 +21,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import agents as registry
+from . import approvals as approval_rules
 from . import demo
-from .core import Tracker
+from .approvals import Approvals
+from .core import AUTO_APPROVE_MODES, Tracker
 from .pet import Pet
 from .usage import ClaudeUsage
 from .weather import OpenMeteo, WeatherService
@@ -52,9 +55,12 @@ class App:
         self.demo_stop = None
         self.routes = {}  # (endpoint, session) -> agent that really sent it
         self.device = None  # set by device.SerialLink while a board is connected
+        self.viewers = 0    # web simulator pages open right now
+        self.approvals = Approvals()
         self.config_path = config_path
         self.config = {"mode": "custom", "agents": list(registry.DEFAULT_AGENTS),
-                       "pages": list(PAGES), "city": None, "rotate": True}
+                       "pages": list(PAGES), "city": None, "rotate": True,
+                       "approvals": False, "approval_wait": approval_rules.DEFAULT_WAIT}
         self.weather_factory = weather_factory
         self.weather = None
         if config_path and os.path.exists(config_path):
@@ -82,6 +88,11 @@ class App:
                 self.config["pages"] = pages
         if isinstance(cfg.get("rotate"), bool):
             self.config["rotate"] = cfg["rotate"]
+        if isinstance(cfg.get("approvals"), bool):
+            self.config["approvals"] = cfg["approvals"]
+        if isinstance(cfg.get("approval_wait"), int) and not isinstance(cfg.get("approval_wait"), bool):
+            self.config["approval_wait"] = max(approval_rules.MIN_WAIT,
+                                               min(approval_rules.MAX_WAIT, cfg["approval_wait"]))
         if "city" in cfg and (cfg["city"] is None or isinstance(cfg["city"], str)):
             self.config["city"] = (cfg["city"] or "").strip()[:60] or None
 
@@ -97,6 +108,7 @@ class App:
         self._apply_config(cfg)
         if self.config["city"] != city:
             self._restart_weather()
+        self.release_approvals()
         if self.config_path:
             try:
                 os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
@@ -109,7 +121,13 @@ class App:
 
     def set_device(self, info):
         self.device = info
+        self.release_approvals()
         self.notify()
+
+    def release_approvals(self):
+        """Hand held requests back to the computer once no screen can answer them."""
+        if not self.approvals_active():
+            self.approvals.cancel_all()
 
     def shown_agents(self):
         if self.config["mode"] == "auto":
@@ -138,12 +156,51 @@ class App:
         return found or self.routes.get(key, endpoint)
 
     def handle_hook(self, endpoint, payload, event=None):
+        return self._apply(endpoint, payload, event)[1]
+
+    def _apply(self, endpoint, payload, event=None):
         agent = self.route(endpoint, payload)
         ev = self.tracker.handle(agent, payload, event)
+        if ev not in ("PermissionRequest", "Notification") and isinstance(payload, dict):
+            # Any other event means the agent is no longer waiting on a held request.
+            self.approvals.cancel_session(agent, str(payload.get("session_id") or "default"))
         if ev == "SessionEnd" and isinstance(payload, dict):
             self.routes.pop((endpoint, str(payload.get("session_id") or "")), None)
         self.notify()
-        return ev
+        return agent, ev
+
+    def approvals_active(self):
+        """Holding requests only makes sense while someone can see them."""
+        return self.config["approvals"] and (self.device is not None or self.viewers > 0)
+
+    def handle_hook_and_wait(self, endpoint, payload, event=None):
+        """Like handle_hook, but a PermissionRequest may be held for a decision
+        from the device. Returns {"decision": "allow"|"deny"} or {} (no decision)."""
+        agent, ev = self._apply(endpoint, payload, event)
+        if (ev != "PermissionRequest" or agent not in approval_rules.SUPPORTED.get(endpoint, ())
+                or not isinstance(payload, dict) or not self.approvals_active()
+                or payload.get("permission_mode") in AUTO_APPROVE_MODES):
+            return {}
+        sid = str(payload.get("session_id") or "default")
+        tool = str(payload.get("tool_name") or "tool")
+        detail = approval_rules.describe_request(tool, payload.get("tool_input"))
+        wait = self.config["approval_wait"]
+        pending = self.approvals.open(agent, sid, tool, detail, wait)
+        # Alert straight away rather than after the usual auto-approve grace.
+        self.tracker.handle(agent, {"hook_event_name": "Notification", "session_id": sid,
+                                    "notification_type": "permission_prompt"})
+        self.notify()
+        decision = self.approvals.wait(pending, wait)
+        if decision:
+            self.tracker.handle(agent, {"session_id": sid, "hook_event_name":
+                                        "PermissionGranted" if decision == "allow" else "PermissionDenied"})
+        self.notify()
+        return {"decision": decision} if decision else {}
+
+    def decide(self, rid, decision):
+        ok = self.approvals.decide(str(rid), decision)
+        self.notify()
+        return ok
 
     def button(self, name, agent=None, everyone=False):
         """Button B: acknowledge `agent` (the one on screen), or every agent
@@ -176,6 +233,15 @@ class App:
         snap["mode"] = self.config["mode"]
         snap["device"] = self.device
         snap["pages"] = list(self.config["pages"])
+        held = self.approvals.current() if self.config["approvals"] else None
+        snap["approval"] = None
+        if held:
+            info = registry.describe(held.agent)
+            snap["approval"] = {"id": held.id, "agent": held.agent, "label": info["label"],
+                                "tool": held.tool, "detail": held.detail,
+                                "deadline": int(held.deadline), "wait": held.wait}
+            if held.agent in snap["agents"]:  # the request owns the screen
+                snap["focus"], snap["rotation"] = held.agent, None
         snap["weather"] = self.weather.snapshot() if self.weather else None
         snap["v"] = PROTOCOL_VERSION
         snap["pet"] = self.pet.snapshot()
@@ -263,7 +329,11 @@ class Handler(BaseHTTPRequestHandler):
 
         m = AGENT_RE.match(url.path)
         if m:
-            event = (parse_qs(url.query).get("event") or [None])[0]
+            query = parse_qs(url.query)
+            event = (query.get("event") or [None])[0]
+            if (query.get("wait") or ["0"])[0] == "1":
+                # hook_bridge.py asks for this on PermissionRequest; may block for a decision
+                return self._json(200, self.app.handle_hook_and_wait(m.group(1), body, event))
             self.app.handle_hook(m.group(1), body, event)
             return self._json(200, {})  # empty hook output: never alter agent behaviour
         if not isinstance(body, dict):
@@ -274,6 +344,8 @@ class Handler(BaseHTTPRequestHandler):
                                                               bool(body.get("all")))})
         if url.path == "/api/config":
             return self._json(200, self.app.set_config(body))
+        if url.path == "/api/approval":
+            return self._json(200, {"ok": self.app.decide(body.get("id"), body.get("decision"))})
         if url.path == "/api/demo":
             self.app.start_demo(float(body.get("speed") or 1.0))
             return self._json(200, {"ok": True})
@@ -285,6 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         last, idle = None, 0
+        self.app.viewers += 1
         try:
             while True:
                 body = json.dumps(self.app.snapshot(), sort_keys=True)
@@ -300,6 +373,9 @@ class Handler(BaseHTTPRequestHandler):
                 idle += 1
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
+        finally:
+            self.app.viewers -= 1
+            self.app.release_approvals()
 
 
 def serve(host="127.0.0.1", port=7878, pet_path=None, usage=True, demo_on_start=False,

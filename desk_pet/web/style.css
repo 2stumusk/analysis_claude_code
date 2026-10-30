@@ -157,3 +157,8 @@ pre {
 
 .check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; cursor: pointer; }
 .check input { accent-color: var(--accent); }
+.wait { align-items: center; margin-top: 8px; font-size: 13px; }
+.wait select {
+  font: inherit; font-size: 13px; padding: 4px 8px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text);
+}

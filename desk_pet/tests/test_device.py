@@ -124,6 +124,21 @@ class FirmwareParseTest(unittest.TestCase):
         self.assertEqual(got["usage"], 1234)
         self.assertEqual(got["time"], "2026-10-27 07:59:50 w2")  # Tuesday
 
+    def test_approval_round_trip(self):
+        app = busy_app()
+        app.config["approvals"] = True
+        app.approvals.open("codex", "x", "Bash", "git push --force " + "x" * 200, 45)
+        frame = device_frame(app.snapshot(), now=1793059190)
+        (got,) = self.parse(encode(frame).decode().strip())
+        active, agent, deadline, wait, rid, label, tool, detail = got["approval"]
+        self.assertEqual((active, agent, wait, label, tool), (1, 1, 45, "CODEX", "Bash"))
+        self.assertEqual(rid, app.approvals.current().id)
+        self.assertEqual(deadline, int(app.approvals.current().deadline))
+        self.assertEqual(detail, frame["ap"]["d"])
+        self.assertEqual(len(detail), 120)
+        (none,) = self.parse('{"v":1,"a":[]}')
+        self.assertEqual(none["approval"][0], 0)
+
     def test_rejects_bad_frames(self):
         results = self.parse('{"v":2,"a":[]}', '{"v":1}', '{"v":1,"a":[', "not json",
                              '{"v":1,"a":[{"id":"x","s":"weird"}],"f":7}')
@@ -150,6 +165,7 @@ class SerialLinkTest(unittest.TestCase):
         app = busy_app()
         pressed = []
         app.button = lambda *args: pressed.append(args) or "ack"
+        app.decide = lambda *args: pressed.append(args) or True
         old = device.has_pyserial
         device.has_pyserial = lambda: False  # exercise the termios path
         link = SerialLink(app, path, log=lambda msg: None)
@@ -165,6 +181,8 @@ class SerialLinkTest(unittest.TestCase):
 
             os.write(master, b'{"btn":"B","agent":"codex"}\n{"btn":"B","all":1}\n')
             self.wait_for(lambda: pressed == [("B", "codex", False), ("B", None, True)])
+            os.write(master, b'{"approval":"claude-ab1","decision":"deny"}\n{"approval":7}\n')
+            self.wait_for(lambda: pressed[2:] == [("claude-ab1", "deny")])
 
             app.handle_hook("claude", ev("Stop", "c"))  # state change: sent before the heartbeat
             self.wait_for(lambda: self.read_frame(master)["a"][0]["s"] == "done")

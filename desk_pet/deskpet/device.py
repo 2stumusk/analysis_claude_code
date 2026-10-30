@@ -5,7 +5,8 @@ firmware/src/frame.h) whenever the screen would change, and at least every
 HEARTBEAT seconds so the device keeps its clock and knows the link is alive.
 The device sends {"hello": "deskpet", ...} until it hears from us, and
 {"btn": "B", "agent": <id on screen>} when button B is pressed, with
-"all": 1 for a long press.
+"all": 1 for a long press, and {"approval": <id>, "decision": allow|deny|skip}
+to answer a held permission request (frame field "ap").
 
 pyserial is used when installed; otherwise POSIX termios (macOS / Linux).
 """
@@ -79,7 +80,18 @@ def device_frame(snap, now=None):
         "ro": ([snap["rotation"]["index"], snap["rotation"]["count"]]
                if snap.get("rotation") and snap.get("focus") in order else None),
         "w": weather_frame(snap.get("weather")),
+        "ap": approval_frame(snap.get("approval"), order),
     }
+
+
+def approval_frame(ap, order):
+    """A held permission request: id, agent index, label, tool, detail,
+    deadline (epoch seconds) and the full wait, for the countdown bar."""
+    if not ap:
+        return None
+    return {"id": ascii_clip(ap["id"], 23), "a": order.index(ap["agent"]) if ap["agent"] in order else -1,
+            "l": ascii_clip(ap["label"], 9), "t": ascii_clip(ap["tool"], 20),
+            "d": ascii_clip(ap["detail"], 120), "dl": int(ap["deadline"]), "n": int(ap["wait"])}
 
 
 PAGE_LETTERS = {"face": "f", "clock": "c", "weather": "w", "agents": "a", "stats": "s"}
@@ -113,7 +125,8 @@ def frame_key(snap, frame):
     agents = [dict(a, e=a["e"] >= 0) for a in frame["a"]]
     pet = dict(frame["p"], lu=snap["pet"].get("levelup_at"), fd=snap["pet"].get("fed_at"))
     weather = dict(frame["w"], ag=None) if frame["w"] else None
-    return json.dumps([frame["f"], agents, pet, frame["u"], frame["pg"], weather, frame["ro"]], sort_keys=True)
+    return json.dumps([frame["f"], agents, pet, frame["u"], frame["pg"], weather, frame["ro"],
+                       frame["ap"]], sort_keys=True)
 
 
 def encode(frame):
@@ -325,5 +338,7 @@ class SerialLink:
                 if msg.get("btn") == "B":
                     agent = msg.get("agent") if isinstance(msg.get("agent"), str) else None
                     self.app.button("B", agent, bool(msg.get("all")))
+                elif isinstance(msg.get("approval"), str):
+                    self.app.decide(msg["approval"], msg.get("decision"))
                 elif msg.get("hello") == "deskpet":
                     last_key = None  # the device restarted: resend now
