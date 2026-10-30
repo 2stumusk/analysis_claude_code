@@ -51,6 +51,8 @@ class Ui {
 
   void drawEyes(Gfx& g, int cx, int cy, float s, State st, uint16_t color) const;
   void drawFace(Gfx& g, int cx, int cy, float s, State st, float now) const;
+  void drawExtras(Gfx& g, int cx, int cy, State st, uint16_t color, float now) const;
+  void viewCat(Gfx& g, const Model& m, float now) const;
   void topBar(Gfx& g, const Model& m, float now) const;
   void alertRing(Gfx& g, const Model& m, float now) const;
   void viewFace(Gfx& g, const Model& m, float now) const;

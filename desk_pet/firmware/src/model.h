@@ -19,6 +19,9 @@ constexpr uint8_t kAllPages = 31;
 
 constexpr int kMaxAgents = 8;
 
+// How the face page looks: the drawn eyes, or the pixel cat (cat_art.h).
+enum class Skin : uint8_t { Eyes, Cat };
+
 // Night mode the daemon asks for: screen as usual, dimmed, or off.
 enum class Night : uint8_t { Day, Dim, Off };
 
@@ -96,6 +99,7 @@ struct Model {
   WeatherInfo weather;
   Approval approval;
   Night night = Night::Day;
+  Skin skin = Skin::Eyes;
 };
 
 State parseState(const char* s);

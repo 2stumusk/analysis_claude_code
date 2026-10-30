@@ -1,5 +1,7 @@
 #include "ui.h"
 
+#include "cat_art.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -387,7 +389,11 @@ void Ui::drawFace(Gfx& g, int cx, int cy, float s, State st, float now) const {
   uint16_t color = st == State::Idle ? FG : colorOf(st);
   drawEyes(g, cx, cy, s, st, color);
   if (s < 0.8f) return;
+  drawExtras(g, cx, cy, st, color, now);
+}
 
+// Thought dots, spinner, "!", sparkles, sweat, zzz: drawn around a face or the cat.
+void Ui::drawExtras(Gfx& g, int cx, int cy, State st, uint16_t color, float now) const {
   switch (st) {
     case State::Thinking:
       for (int i = 0; i < 3; i++) {
@@ -490,6 +496,10 @@ void Ui::alertRing(Gfx& g, const Model& m, float now) const {
 // ---------- views ----------
 
 void Ui::viewFace(Gfx& g, const Model& m, float now) const {
+  if (m.skin == Skin::Cat) {
+    viewCat(g, m, now);
+    return;
+  }
   State st = faceState(m);
   bool previewing = preview_ != State::Count;
   drawFace(g, W / 2, 100, 1, st, now);
@@ -548,6 +558,129 @@ void Ui::viewFace(Gfx& g, const Model& m, float now) const {
       snprintf(bits + strlen(bits), sizeof(bits) - strlen(bits), "%s%d sessions", bits[0] ? " | " : "", a->sessions);
     }
     g.text(fit(g, bits, W - 24, Font::Small, buf, sizeof(buf)), 12, 231, Font::Small, DIM);
+  }
+  alertRing(g, m, now);
+}
+
+// ---------- cat skin ----------
+
+namespace {
+
+const char* stateZh(State s) {
+  static const char* const kZh[] = {"离线", "空闲", "思考中", "读文件", "改代码", "跑命令", "需要你", "完成啦", "出错了"};
+  return kZh[(int)s];
+}
+
+// One cat frame at `scale`, as runs of same-coloured pixels per row.
+void drawCat(Gfx& g, CatFrame f, int x0, int y0, int scale) {
+  for (int y = 0; y < kCatSize; y++) {
+    const char* row = kCatFrames[f][y];
+    for (int x = 0; x < kCatSize;) {
+      char ch = row[x];
+      int run = 1;
+      while (x + run < kCatSize && row[x + run] == ch) run++;
+      int idx = ch <= '9' ? ch - '0' : ch - 'a' + 10;
+      if (idx) g.fillRect(x0 + x * scale, y0 + y * scale, run * scale, scale, kCatPalette[idx]);
+      x += run;
+    }
+  }
+}
+
+CatFrame catFrame(State st, bool hungry, bool blinking, float now) {
+  auto two = [now](CatFrame a, float hz) { return (CatFrame)(a + ((int)(now * hz) & 1)); };
+  switch (st) {
+    case State::Thinking: return blinking ? kCat_blink : two(kCat_think_0, 1);
+    case State::Reading: return two(kCat_read_0, 1.5f);
+    case State::Editing: return two(kCat_type_0, 4);
+    case State::Running: return two(kCat_type_0, 6);
+    case State::Waiting: return two(kCat_wait_0, 3);
+    case State::Done: return two(kCat_done_0, 2);
+    case State::Error: return two(kCat_error_0, 4);
+    case State::Offline: return two(kCat_sleep_0, 0.8f);
+    default:
+      if (hungry) return two(kCat_hungry_0, 1);
+      return blinking ? kCat_blink : two(kCat_idle_0, 0.7f);
+  }
+}
+
+}  // namespace
+
+// The face page as a pixel cat, with a card underneath: who, what state (in
+// Chinese), what it is doing, and how long / how many tools so far. The bar
+// only shows activity; hooks give no "percent done", so none is shown.
+void Ui::viewCat(Gfx& g, const Model& m, float now) const {
+  State st = faceState(m);
+  bool previewing = preview_ != State::Count;
+  bool hungry = st == State::Idle && m.pet.mood == Mood::Hungry;
+  drawCat(g, catFrame(st, hungry, blink_ < 0.5f, now), 96, 32, 4);
+  if (st != State::Editing) drawExtras(g, W / 2, 100, st, st == State::Idle ? FG : colorOf(st), now);
+
+  float age = -1;  // hearts after feeding or a level-up, as on the eyes face
+  for (float a : {m.pet.fed_age, m.pet.levelup_age}) {
+    if (a >= 0 && (age < 0 || a < age)) age = a;
+  }
+  if (age >= 0) {
+    float p = (age + now - m.rx_time) / 2.5f;
+    if (p >= 0 && p <= 1) {
+      for (int i = 0; i < 3; i++) heart(g, 72 + i * 88, (int)(80 - p * 40 - i * 6), 1.6f, blend(HEART, BG, 1 - p));
+    }
+  }
+  topBar(g, m, now);
+
+  const Agent* a = m.connected ? agentAt(m, m.focus) : nullptr;
+  uint16_t color = colorOf(st);
+  g.fillRoundRect(10, 166, W - 20, 60, 10, CARD);
+
+  // Who, and the state as a pill on the right.
+  char buf[160];
+  g.fillCircle(24, 180, 4, color);
+  if (a && !previewing && m.rot_count > 1) {
+    snprintf(buf, sizeof(buf), "%s  %d/%d", a->label, m.rot_index + 1, m.rot_count);
+  } else {
+    snprintf(buf, sizeof(buf), "%s", a ? a->label : "DESK PET");
+  }
+  g.text(buf, 34, 186, Font::Label, FG);
+  const char* zh = hungry ? "饿了" : stateZh(st);
+  int tw = g.textWidth(zh, Font::Small);
+  g.fillRoundRect(W - 22 - tw - 16, 172, tw + 16, 19, 9, blend(color, CARD, 0.25f));
+  g.text(zh, W - 22 - tw / 2 - 8, 186, Font::Small, color, Align::Center);
+
+  // What it is doing.
+  const char* detail = previewing ? "preview" : (a ? a->detail : "");
+  if (!previewing && st == State::Offline) {
+    detail = m.connected ? "还没有 Agent 在工作" : "电脑上运行 deskpet --serial auto";
+  } else if (!previewing && st == State::Idle) {
+    detail = hungry ? "饿了，按 B 喂我" : (a && a->cwd[0] ? a->cwd : "空闲中，随时开工");
+  }
+  g.text(fit(g, detail, W - 44, Font::Mono, buf, sizeof(buf)), 22, 205, Font::Mono, SOFT);
+
+  // Time and tool count, real numbers from the hooks.
+  char stats[64] = "";
+  if (!previewing && a && a->elapsed >= 0 && busy(st)) {
+    char dur[16];
+    fmtDur(a->elapsed + now - m.rx_time, dur, sizeof(dur));
+    snprintf(stats, sizeof(stats), "用时 %s", dur);
+  }
+  if (!previewing && a && a->tools && st != State::Offline) {
+    snprintf(stats + strlen(stats), sizeof(stats) - strlen(stats), "%s工具 %d 次", stats[0] ? " · " : "", a->tools);
+  }
+  int sw = stats[0] ? g.textWidth(stats, Font::Small) : 0;
+  if (stats[0]) g.text(stats, W - 22, 220, Font::Small, DIM, Align::Right);
+
+  // Activity bar: a sweep while busy, solid when done / failed, pulsing when it needs you.
+  int bx = 22, bw = W - 44 - (sw ? sw + 10 : 0), by = 213;
+  if (bw > 20) {
+    g.fillRoundRect(bx, by, bw, 5, 2, FAINT);
+    if (st == State::Done || st == State::Error) {
+      g.fillRoundRect(bx, by, bw, 5, 2, color);
+    } else if (st == State::Waiting) {
+      g.fillRoundRect(bx, by, bw, 5, 2, blend(color, FAINT, 0.5f + 0.5f * sinf(now * 6)));
+    } else if (busy(st)) {
+      int seg = bw / 3;
+      int pos = (int)fmodf(now * 90, (float)(bw + seg)) - seg;
+      int x0 = pos < 0 ? 0 : pos, x1 = pos + seg > bw ? bw : pos + seg;
+      if (x1 > x0) g.fillRoundRect(bx + x0, by, x1 - x0, 5, 2, color);
+    }
   }
   alertRing(g, m, now);
 }

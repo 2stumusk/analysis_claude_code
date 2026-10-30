@@ -395,6 +395,9 @@ bool parseFrame(const char* line, Model& m, float now) {
   }
   int nt = (int)doc->num(root, "nt", 0);
   next.night = (nt == 1 || nt == 2) ? (Night)nt : Night::Day;
+  char skin[8];
+  doc->str(root, "sk", skin, sizeof(skin));
+  next.skin = strcmp(skin, "cat") == 0 ? Skin::Cat : Skin::Eyes;
   next.connected = true;
   next.rx_time = now;
   m = next;

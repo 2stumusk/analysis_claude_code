@@ -33,12 +33,14 @@ from .weather import OpenMeteo, WeatherService
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/sim.js": ("sim.js", "text/javascript; charset=utf-8"),
+          "/cat_art.js": ("cat_art.js", "text/javascript; charset=utf-8"),
           "/style.css": ("style.css", "text/css; charset=utf-8")}
 AGENT_RE = re.compile(r"^/hook/([a-z0-9_-]{1,24})$")
 MAX_BODY = 2 * 1024 * 1024
 PROTOCOL_VERSION = 1
 MAX_ROUTES = 1000
 PAGES = ["face", "clock", "weather", "agents", "stats"]  # button A cycles through these
+SKINS = ("cat", "eyes")  # face page: pixel cat, or the drawn eyes
 
 
 def open_meteo_service(city, on_change):
@@ -62,7 +64,7 @@ class App:
         self.config = {"mode": "custom", "agents": list(registry.DEFAULT_AGENTS),
                        "pages": list(PAGES), "city": None, "rotate": True,
                        "approvals": False, "approval_wait": approval_rules.DEFAULT_WAIT,
-                       "night": dict(night_rules.DEFAULT)}
+                       "night": dict(night_rules.DEFAULT), "skin": "cat"}
         self.weather_factory = weather_factory
         self.weather = None
         if config_path and os.path.exists(config_path):
@@ -95,6 +97,8 @@ class App:
         if isinstance(cfg.get("approval_wait"), int) and not isinstance(cfg.get("approval_wait"), bool):
             self.config["approval_wait"] = max(approval_rules.MIN_WAIT,
                                                min(approval_rules.MAX_WAIT, cfg["approval_wait"]))
+        if cfg.get("skin") in SKINS:
+            self.config["skin"] = cfg["skin"]
         if "night" in cfg:
             self.config["night"] = night_rules.clean(cfg["night"], self.config["night"])
         if "city" in cfg and (cfg["city"] is None or isinstance(cfg["city"], str)):
@@ -247,6 +251,7 @@ class App:
             if held.agent in snap["agents"]:  # the request owns the screen
                 snap["focus"], snap["rotation"] = held.agent, None
         snap["night"] = night_rules.level(self.config["night"])
+        snap["skin"] = self.config["skin"]
         snap["weather"] = self.weather.snapshot() if self.weather else None
         snap["v"] = PROTOCOL_VERSION
         snap["pet"] = self.pet.snapshot()

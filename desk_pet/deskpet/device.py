@@ -117,6 +117,7 @@ def device_frame(snap, now=None):
         "w": weather_frame(snap.get("weather")),
         "ap": approval_frame(snap.get("approval"), order),
         "nt": int(snap.get("night") or 0),  # 0 day, 1 dim, 2 screen off
+        "sk": snap.get("skin") or "eyes",
     }
 
 
@@ -162,7 +163,7 @@ def frame_key(snap, frame):
     pet = dict(frame["p"], lu=snap["pet"].get("levelup_at"), fd=snap["pet"].get("fed_at"))
     weather = dict(frame["w"], ag=None) if frame["w"] else None
     return json.dumps([frame["f"], agents, pet, frame["u"], frame["pg"], weather, frame["ro"],
-                       frame["ap"], frame["nt"]], sort_keys=True)
+                       frame["ap"], frame["nt"], frame["sk"]], sort_keys=True)
 
 
 def encode(frame):

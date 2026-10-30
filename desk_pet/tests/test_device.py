@@ -83,6 +83,14 @@ class FrameTest(unittest.TestCase):
         line = encode(device_frame(app.snapshot()))
         self.assertLess(len(line), 4096)  # the firmware's line buffer
 
+    def test_skin_in_frame(self):
+        app = App(usage=False)
+        self.assertEqual(device_frame(app.snapshot())["sk"], "cat")  # the default
+        app.set_config({"skin": "eyes"})
+        self.assertEqual(device_frame(app.snapshot())["sk"], "eyes")
+        app.set_config({"skin": "dog"})  # unknown: ignored
+        self.assertEqual(app.config["skin"], "eyes")
+
     def test_night_level_in_frame(self):
         app = App(usage=False)
         snap = app.snapshot()
@@ -163,6 +171,10 @@ class FirmwareParseTest(unittest.TestCase):
         self.assertEqual(len(detail), 120)
         (none,) = self.parse('{"v":1,"a":[]}')
         self.assertEqual(none["approval"][0], 0)
+
+    def test_skin_round_trip(self):
+        got = self.parse('{"v":1,"a":[],"sk":"cat"}', '{"v":1,"a":[],"sk":"eyes"}', '{"v":1,"a":[]}')
+        self.assertEqual([g["skin"] for g in got], [1, 0, 0])
 
     def test_night_round_trip(self):
         got = self.parse('{"v":1,"a":[],"nt":2}', '{"v":1,"a":[],"nt":1}', '{"v":1,"a":[]}', '{"v":1,"a":[],"nt":9}')

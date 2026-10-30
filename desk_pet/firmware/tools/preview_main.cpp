@@ -189,7 +189,7 @@ int parse() {
     snprintf(wbuf, sizeof(wbuf), ",\"approval\":[%d,%d,%lld,%d,", ap.active ? 1 : 0, ap.agent,
              (long long)ap.deadline, ap.wait);
     out += wbuf + quoted(ap.id) + "," + quoted(ap.label) + "," + quoted(ap.tool) + "," + quoted(ap.detail) + "]";
-    out += ",\"night\":" + std::to_string((int)m.night) + "}";
+    out += ",\"night\":" + std::to_string((int)m.night) + ",\"skin\":" + std::to_string((int)m.skin) + "}";
     puts(out.c_str());
   }
   return 0;

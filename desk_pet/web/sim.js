@@ -273,13 +273,18 @@
     const color = state === "idle" || state === "offline" ? (state === "offline" ? COLORS.offline : FG) : COLORS[state];
     drawEyes(cx, cy, s, state, t, mood, color);
     if (s < 0.8) return;
+    extras(cx, cy, state, t, color, true);
+  }
+
+  // Thought dots, spinner, "!", sparkles, sweat, zzz: around the eyes or the cat.
+  function extras(cx, cy, state, t, color, cursor) {
     if (state === "thinking") bubbleDots(cx + 78, cy - 58, t, color);
     if (state === "running") spinner(cx + 112, cy - 50, t, color);
     if (state === "waiting") bang(cx + 112, cy - 46, t, color);
     if (state === "done") sparkles(cx, cy, t, color);
     if (state === "error") sweat(cx + 104, cy - 40, t);
     if (state === "offline") zzz(cx + 92, cy - 30, t);
-    if (state === "editing") {
+    if (state === "editing" && cursor) {
       if (Math.floor(t * 2) % 2) { ctx.fillStyle = color; ctx.fillRect(cx - 14, cy + 46, 28, 4); }
     }
   }
@@ -339,7 +344,95 @@
   }
 
   // ---------- views ----------
+  // ---------- cat skin (mirrors viewCat in firmware/src/ui.cpp) ----------
+  const STATE_ZH = { offline: "离线", idle: "空闲", thinking: "思考中", reading: "读文件", editing: "改代码",
+    running: "跑命令", waiting: "需要你", done: "完成啦", error: "出错了" };
+  let catBlinkAt = now() + 3;
+  function catFrame(st, hungry, t) {
+    const two = (base, hz) => `${base}_${Math.floor(t * hz) & 1}`;
+    if (t > catBlinkAt + 0.16) catBlinkAt = t + 2.5 + Math.random() * 4;
+    const blinking = t > catBlinkAt;
+    switch (st) {
+      case "thinking": return blinking ? "blink" : two("think", 1);
+      case "reading": return two("read", 1.5);
+      case "editing": return two("type", 4);
+      case "running": return two("type", 6);
+      case "waiting": return two("wait", 3);
+      case "done": return two("done", 2);
+      case "error": return two("error", 4);
+      case "offline": return two("sleep", 0.8);
+      default: return hungry ? two("hungry", 1) : blinking ? "blink" : two("idle", 0.7);
+    }
+  }
+  function drawCat(name, x0, y0, scale) {
+    const art = window.CAT_ART;
+    if (!art) return;
+    art.frames[name].forEach((row, y) => {
+      for (let x = 0; x < art.size;) {
+        let run = 1;
+        while (x + run < art.size && row[x + run] === row[x]) run++;
+        const color = art.palette[parseInt(row[x], 16)];
+        if (color) { ctx.fillStyle = color; ctx.fillRect(x0 + x * scale, y0 + y * scale, run * scale, scale); }
+        x += run;
+      }
+    });
+  }
+  function viewCat(t) {
+    const st = faceState();
+    const hungry = st === "idle" && snap && snap.pet.mood === "hungry" && !preview;
+    drawCat(catFrame(st, hungry, t), 96, 32, 4);
+    extras(W / 2, 100, st, t, st === "idle" ? FG : COLORS[st], false);
+    if (snap) {
+      hearts(W / 2, 100, t, snap.pet.fed_at ? Math.max(snap.pet.fed_at, snap.pet.levelup_at || 0) : snap.pet.levelup_at || -1);
+    }
+    topBar(t);
+
+    const { name, a } = focusAgent();
+    const color = COLORS[st];
+    rrect(10, 166, W - 20, 60, 10); ctx.fillStyle = "#15181d"; ctx.fill();
+    circle(24, 180, 4, color);
+    const rot = !preview && snap && snap.rotation;
+    const who = name ? label(name) : "DESK PET";
+    text(rot && rot.count > 1 ? `${who}  ${rot.index + 1}/${rot.count}` : who, 34, 186, { size: 13, weight: 800 });
+    const zh = hungry ? "饿了" : STATE_ZH[st];
+    ctx.font = `600 11px ${SANS}`;
+    const tw = ctx.measureText(zh).width;
+    ctx.globalAlpha = 0.25; rrect(W - 22 - tw - 16, 172, tw + 16, 19, 9); ctx.fillStyle = color; ctx.fill();
+    ctx.globalAlpha = 1;
+    text(zh, W - 22 - tw / 2 - 8, 186, { size: 11, weight: 600, color, align: "center" });
+
+    let detail = preview ? "preview" : a.detail || "";
+    if (!preview && st === "offline") detail = connected ? "还没有 Agent 在工作" : "电脑上运行 deskpet --serial auto";
+    else if (!preview && st === "idle") detail = hungry ? "饿了，按 B 喂我" : a.cwd || "空闲中，随时开工";
+    ctx.font = `400 12px ${MONO}`;
+    text(fit(detail, W - 44), 22, 205, { size: 12, font: MONO, color: "#b9bec6" });
+
+    // Real numbers only: hooks report no "percent done", so the bar just shows activity.
+    const stats = [];
+    const busy = st !== "idle" && st !== "offline";
+    if (!preview && a.task_start && busy) stats.push(`用时 ${fmtDur(now() - a.task_start)}`);
+    if (!preview && a.tools && st !== "offline") stats.push(`工具 ${a.tools} 次`);
+    const s = stats.join(" · ");
+    ctx.font = `400 10px ${SANS}`;
+    const sw = s ? ctx.measureText(s).width : 0;
+    if (s) text(s, W - 22, 220, { size: 10, color: DIM, align: "right" });
+    const bx = 22, bw = W - 44 - (sw ? sw + 10 : 0), by = 213;
+    if (bw > 20) {
+      rrect(bx, by, bw, 5, 2); ctx.fillStyle = FAINT; ctx.fill();
+      ctx.fillStyle = color;
+      if (st === "done" || st === "error") { rrect(bx, by, bw, 5, 2); ctx.fill(); }
+      else if (st === "waiting") {
+        ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 6); rrect(bx, by, bw, 5, 2); ctx.fill(); ctx.globalAlpha = 1;
+      } else if (busy) {
+        const seg = bw / 3, pos = ((t * 90) % (bw + seg)) - seg;
+        const x0 = Math.max(0, pos), x1 = Math.min(bw, pos + seg);
+        if (x1 > x0) { rrect(bx + x0, by, x1 - x0, 5, 2); ctx.fill(); }
+      }
+    }
+  }
+
   function viewFace(t) {
+    if (snap && snap.skin === "cat") return viewCat(t);
     const st = faceState();
     const mood = snap ? snap.pet.mood : "ok";
     face(W / 2, 100, 1, st, t, mood);
@@ -965,6 +1058,14 @@
       ? `每天 ${n.from}–${n.to} ${n.level === "off" ? "熄屏" : "调暗"}（按电脑的本地时间）。有 Agent 需要你或有权限请求时照样亮屏；按任意键亮 30 秒，熄屏时这一下只负责点亮。夜里只有"需要你"会响，完成提示音静音。`
       : "关闭：屏幕一直亮着。";
   }
+  const skinBtns = document.querySelectorAll("[data-skin]");
+  skinBtns.forEach((b) => b.addEventListener("click", () => saveConfig({ skin: b.dataset.skin })));
+  function renderSkin() {
+    skinBtns.forEach((b) => {
+      const on = (config.skin || "cat") === b.dataset.skin;
+      b.classList.toggle("active", on); b.setAttribute("aria-checked", String(on));
+    });
+  }
   function renderApprovals() {
     approvalsBox.checked = !!config.approvals;
     waitSel.value = String(config.approval_wait || 30);
@@ -1061,6 +1162,7 @@
     rotateBox.checked = config.rotate !== false;
     renderApprovals();
     renderNight();
+    renderSkin();
     pickNote.textContent = auto
       ? "自动模式：哪个 Agent 有活动会话就显示哪个，全部空闲时显示 OFFLINE。"
       : `已选 ${config.agents.length} 个。超过 2 个时顶栏用缩写，超过 3 个时列表页改为紧凑行。`;

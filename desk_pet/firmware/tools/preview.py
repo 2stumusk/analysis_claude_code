@@ -207,10 +207,11 @@ def sample_weather(kind="rain", code=61, day=True, temp=17):
                       for i in range(6)]}
 
 
-def scene(agents, events, later=125, tweak=None, weather=None, pages=None):
+def scene(agents, events, later=125, tweak=None, weather=None, pages=None, skin="eyes"):
     """Frame for an App that saw `events`, `later` seconds after they happened."""
     app = App(usage=False, weather_factory=None)
-    app.set_config({"agents": agents, "pages": pages or ["face", "clock", "weather", "agents", "stats"]})
+    app.set_config({"agents": agents, "pages": pages or ["face", "clock", "weather", "agents", "stats"],
+                    "skin": skin})
     for agent, payload in events:
         app.handle_hook(agent, payload)
     if tweak:
@@ -298,6 +299,18 @@ def scenes():
     yield "chinese-agents", "agents", "-", scene(duo, zh)
     yield "chinese-approval", "face", "-", scene(duo, zh, later=8, tweak=held(
         "claude", "Bash", {"command": "rm -rf ./构建产物/旧版本 && git commit -m '修复：购物车优惠券叠加计算错误'"}))
+    cat = dict(skin="cat")
+    yield "cat-offline", "face", "-", scene(duo, [], **cat)
+    yield "cat-idle", "face", "-", scene(duo, start[:1], **cat)
+    yield "cat-thinking", "face", "-", scene(duo, start, **cat)
+    yield "cat-reading", "face", "-", scene(duo, start + [("claude", tool("Read", "c", file_path="/work/shop-api/src/cart.ts"))], **cat)
+    yield "cat-editing", "face", "-", scene(duo, zh[:3], **cat)
+    yield "cat-running", "face", "-", scene(duo, start + [("claude", tool("Bash", "c", command="npm test -- cart --coverage"))], **cat)
+    yield "cat-waiting", "face", "-", scene(duo, start + [("claude", ev("Notification", "c", notification_type="permission_prompt", message="Claude needs your permission to use Bash"))], **cat)
+    yield "cat-done", "face", "-", scene(["claude"], start[:1] + [("claude", ev("UserPromptSubmit", "c")), ("claude", ev("Stop", "c"))], later=3, **cat)
+    yield "cat-error", "face", "-", scene(["codex"], start[1:2] + [("codex", ev("UserPromptSubmit", "x")), ("codex", ev("StopFailure", "x", error="cargo test: 2 failed"))], later=3, **cat)
+    yield "cat-hungry", "face", "-", scene(duo, start[:2], tweak=hungry, **cat)
+    yield "cat-rotating", "face", "-", scene(three, busy3, **cat)
     yield "approval-touch", "face", "halves", scene(duo, start, later=8, tweak=held("claude", "Bash", cmd))
 
 
