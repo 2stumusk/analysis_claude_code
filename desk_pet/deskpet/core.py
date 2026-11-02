@@ -275,7 +275,7 @@ class Tracker:
                 if not sessions:
                     agents[name] = {"state": "offline", "detail": "", "since": None,
                                     "task_start": None, "tools": 0, "sessions": 0,
-                                    "cwd": "", "alert": False, "last": None}
+                                    "cwd": "", "alert": False, "last": None, "session": None}
                     continue
                 best = max(sessions.values(),
                            key=lambda s: (PRIORITY[s.effective(now)], s.last))
@@ -290,6 +290,7 @@ class Tracker:
                     "cwd": best.cwd,
                     "alert": state == "waiting" and not best.muted,
                     "last": round(max(s.last for s in sessions.values()), 3),
+                    "session": best.sid,  # the session shown, e.g. to jump to its terminal
                 }
         order = list(agents)
         focus = max(order, key=lambda a: (agents[a]["alert"], PRIORITY[agents[a]["state"]], agents[a]["last"] or 0),

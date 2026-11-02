@@ -93,6 +93,9 @@ def device_frame(snap, now=None):
             "n": int(a.get("tools") or 0),
             "k": int(a.get("sessions") or 0),
             "x": 1 if a.get("alert") else 0,
+            "u": 1 if a.get("urgent") else 0,
+            # seconds it has been waiting for you, -1 = not waiting; the device counts on
+            "w": max(0, int(now - a["since"])) if a["state"] == "waiting" and a.get("since") else -1,
         })
     p = snap["pet"]
 
@@ -159,7 +162,7 @@ def frame_key(snap, frame):
 
     Ticking values (time, task timers, ages) are left out; the device advances
     them itself."""
-    agents = [dict(a, e=a["e"] >= 0) for a in frame["a"]]
+    agents = [dict(a, e=a["e"] >= 0, w=a["w"] >= 0) for a in frame["a"]]
     pet = dict(frame["p"], lu=snap["pet"].get("levelup_at"), fd=snap["pet"].get("fed_at"))
     weather = dict(frame["w"], ag=None) if frame["w"] else None
     return json.dumps([frame["f"], agents, pet, frame["u"], frame["pg"], weather, frame["ro"],

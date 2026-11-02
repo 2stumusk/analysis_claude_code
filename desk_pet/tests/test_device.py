@@ -152,7 +152,8 @@ class FirmwareParseTest(unittest.TestCase):
         self.assertEqual(claude[4], frame["a"][0]["d"])
         self.assertEqual(claude[5], "购物车-api")
         self.assertEqual(codex[3], "NEEDS YOU")
-        self.assertEqual(codex[-1], 1)
+        self.assertEqual(codex[9], 1)                              # alert
+        self.assertEqual((codex[10], codex[11] >= 0), (0, True))   # not urgent yet, waiting
         self.assertEqual(got["pet"], [2, 130, 200, 12, 0, 3, 17, 1])  # mood 0 = hungry
         self.assertEqual(got["usage"], 1234)
         self.assertEqual(got["time"], "2026-10-27 07:59:50 w2")  # Tuesday

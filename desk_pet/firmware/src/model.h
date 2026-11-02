@@ -38,6 +38,8 @@ struct Agent {
   uint16_t tools;
   uint8_t sessions;
   bool alert;        // waiting and not yet acknowledged
+  bool urgent;       // ...for longer than the reminder time: remind louder
+  int32_t waited;    // seconds waiting for you when the frame was sent, -1 = not waiting
 };
 
 struct PetInfo {

@@ -158,7 +158,8 @@ int parse() {
     for (int i = 0; i < m.count; i++) {
       const Agent& a = m.agents[i];
       char nums[64];
-      snprintf(nums, sizeof(nums), ",%d,%d,%d,%d]", (int)a.elapsed, a.tools, a.sessions, a.alert ? 1 : 0);
+      snprintf(nums, sizeof(nums), ",%d,%d,%d,%d,%d,%d]", (int)a.elapsed, a.tools, a.sessions, a.alert ? 1 : 0,
+               a.urgent ? 1 : 0, (int)a.waited);
       out += std::string(i ? "," : "") + "[" + quoted(a.id) + "," + quoted(a.label) + "," + quoted(a.abbr) + "," +
              quoted(stateLabel(a.state)) + "," + quoted(a.detail) + "," + quoted(a.cwd) + nums;
     }

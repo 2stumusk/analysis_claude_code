@@ -147,6 +147,9 @@ const Note kWaiting[] = {{880, 140}, {0, 40}, {660, 200}, {0, 0}};
 const Note kDone[] = {{660, 100}, {880, 100}, {1320, 220}, {0, 0}};
 const Note kError[] = {{220, 300}, {0, 0}};
 const Note kClick[] = {{1400, 25}, {0, 0}};
+// Unanswered too long: three quick high beeps, twice.
+const Note kUrgent[] = {{1320, 90}, {0, 50}, {1320, 90}, {0, 50}, {1320, 90}, {0, 250},
+                        {1320, 90}, {0, 50}, {1320, 90}, {0, 50}, {1320, 90}, {0, 0}};
 const Note* playing = nullptr;
 uint32_t noteEnds = 0;
 
@@ -162,7 +165,11 @@ void startNote() {
 
 void play(Sound s) {
   if (speakerPin < 0 || muted || s == Sound::None) return;
-  playing = s == Sound::Waiting ? kWaiting : s == Sound::Done ? kDone : s == Sound::Error ? kError : kClick;
+  playing = s == Sound::Waiting ? kWaiting
+            : s == Sound::Urgent ? kUrgent
+            : s == Sound::Done   ? kDone
+            : s == Sound::Error  ? kError
+                                 : kClick;
   startNote();
 }
 
@@ -318,7 +325,9 @@ void loop() {
   ui.update(model, now);
   Sound sound = ui.takeSound();
   // At night only "needs you" makes a sound; finished tasks stay quiet.
-  if (model.night == Night::Day || sound == Sound::Waiting || sound == Sound::Click) play(sound);
+  if (model.night == Night::Day || sound == Sound::Waiting || sound == Sound::Urgent || sound == Sound::Click) {
+    play(sound);
+  }
   uint16_t ledColor = 0;
   bool ledOn = ui.led(model, now, &ledColor);
   uint8_t want = targetBrightness(now);

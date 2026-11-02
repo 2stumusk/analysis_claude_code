@@ -309,6 +309,9 @@ def scenes():
     yield "cat-waiting", "face", "-", scene(duo, start + [("claude", ev("Notification", "c", notification_type="permission_prompt", message="Claude needs your permission to use Bash"))], **cat)
     yield "cat-done", "face", "-", scene(["claude"], start[:1] + [("claude", ev("UserPromptSubmit", "c")), ("claude", ev("Stop", "c"))], later=3, **cat)
     yield "cat-error", "face", "-", scene(["codex"], start[1:2] + [("codex", ev("UserPromptSubmit", "x")), ("codex", ev("StopFailure", "x", error="cargo test: 2 failed"))], later=3, **cat)
+    def late(app):  # waited 3 minutes: past the 2 minute reminder
+        app.tracker.agents["claude"]["c"].wait_at -= 180
+    yield "cat-waiting-urgent", "face", "-", scene(duo, start + [("claude", ev("Notification", "c", notification_type="permission_prompt", message="Claude needs your permission to use Bash"))], later=0, tweak=late, **cat)
     yield "cat-hungry", "face", "-", scene(duo, start[:2], tweak=hungry, **cat)
     yield "cat-rotating", "face", "-", scene(three, busy3, **cat)
     yield "approval-touch", "face", "halves", scene(duo, start, later=8, tweak=held("claude", "Bash", cmd))

@@ -10,7 +10,7 @@
 
 namespace pet {
 
-enum class Sound : uint8_t { None, Waiting, Done, Error, Click };
+enum class Sound : uint8_t { None, Waiting, Done, Error, Click, Urgent };
 
 // Same order as the PageBit flags in model.h.
 enum class View : uint8_t { Face, Clock, Weather, Agents, Stats, Count };
@@ -80,6 +80,7 @@ class Ui {
   char prev_ids_[kMaxAgents][12] = {};
   State prev_states_[kMaxAgents] = {};
   bool prev_alerts_[kMaxAgents] = {};
+  bool prev_urgent_[kMaxAgents] = {};
   int prev_count_ = 0;
   float last_alert_beep_ = -100;
   Sound sound_ = Sound::None;

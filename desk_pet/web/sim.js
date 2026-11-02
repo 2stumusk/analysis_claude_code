@@ -33,7 +33,7 @@
   let soundOn = false;
   let audio = null;
   let lastAlertBeep = 0;
-  let prev = { states: {}, alerts: {} };
+  let prev = { states: {}, alerts: {}, urgent: {} };
   let approvalSeen = { id: null, at: 0 };  // when the current request first showed
   const ARM = 0.8;  // seconds before the buttons answer a new request (no accidental presses)
   const WAKE = 30;  // seconds a key press keeps the screen lit at night (as the firmware)
@@ -324,8 +324,9 @@
     if (!snap) return;
     const alert = Object.values(snap.agents).some((a) => a.alert);
     if (!alert && faceState() !== "waiting") return;
-    const a = alert ? 0.45 + 0.45 * Math.sin(t * 6) : 0.25;
-    ctx.strokeStyle = COLORS.waiting; ctx.globalAlpha = a; ctx.lineWidth = 4;
+    const urgent = anyUrgent();  // unanswered too long: faster, redder
+    const a = alert ? 0.45 + 0.45 * Math.sin(t * (urgent ? 14 : 6)) : 0.25;
+    ctx.strokeStyle = urgent ? COLORS.error : COLORS.waiting; ctx.globalAlpha = a; ctx.lineWidth = 4;
     rrect(2, 2, W - 4, H - 4, 10); ctx.stroke();
     ctx.globalAlpha = 1;
   }
@@ -410,19 +411,22 @@
     // Real numbers only: hooks report no "percent done", so the bar just shows activity.
     const stats = [];
     const busy = st !== "idle" && st !== "offline";
-    if (!preview && a.task_start && busy) stats.push(`用时 ${fmtDur(now() - a.task_start)}`);
+    const late = !preview && st === "waiting" && a.urgent;
+    if (!preview && st === "waiting" && a.since) stats.push(`已等 ${fmtDur(now() - a.since)}`);
+    else if (!preview && a.task_start && busy) stats.push(`用时 ${fmtDur(now() - a.task_start)}`);
     if (!preview && a.tools && st !== "offline") stats.push(`工具 ${a.tools} 次`);
     const s = stats.join(" · ");
     ctx.font = `400 10px ${SANS}`;
     const sw = s ? ctx.measureText(s).width : 0;
-    if (s) text(s, W - 22, 220, { size: 10, color: DIM, align: "right" });
+    if (s) text(s, W - 22, 220, { size: 10, color: late ? COLORS.error : DIM, align: "right" });
     const bx = 22, bw = W - 44 - (sw ? sw + 10 : 0), by = 213;
     if (bw > 20) {
       rrect(bx, by, bw, 5, 2); ctx.fillStyle = FAINT; ctx.fill();
       ctx.fillStyle = color;
       if (st === "done" || st === "error") { rrect(bx, by, bw, 5, 2); ctx.fill(); }
       else if (st === "waiting") {
-        ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 6); rrect(bx, by, bw, 5, 2); ctx.fill(); ctx.globalAlpha = 1;
+        if (late) ctx.fillStyle = COLORS.error;
+        ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * (late ? 14 : 6)); rrect(bx, by, bw, 5, 2); ctx.fill(); ctx.globalAlpha = 1;
       } else if (busy) {
         const seg = bw / 3, pos = ((t * 90) % (bw + seg)) - seg;
         const x0 = Math.max(0, pos), x1 = Math.min(bw, pos + seg);
@@ -452,7 +456,10 @@
     const who = agentLabel && rot && rot.count > 1 ? `${agentLabel}  ${rot.index + 1}/${rot.count}` : agentLabel;
     if (who) text(who, 12 + lw + 8, 196, { size: 10, weight: 600, color: DIM });
 
-    if (!preview && a.task_start && st !== "idle" && st !== "offline") {
+    if (!preview && st === "waiting" && a.since) {  // how long it has waited for you
+      text(fmtDur(now() - a.since), W - 12, 196, { size: 14, weight: 700, font: MONO, align: "right",
+        color: a.urgent ? COLORS.error : color });
+    } else if (!preview && a.task_start && st !== "idle" && st !== "offline") {
       text(fmtDur(now() - a.task_start), W - 12, 196, { size: 14, weight: 700, font: MONO, align: "right", color: FG });
     }
     let detail = preview ? "preview" : a.detail || "";
@@ -833,7 +840,7 @@
     if (!snap) { led.classList.remove("on"); return; }
     const alert = Object.values(snap.agents).some((a) => a.alert);
     const st = faceState();
-    const on = alert ? Math.sin(t * 6) > 0 : st === "done" || st === "error";
+    const on = alert ? Math.sin(t * (anyUrgent() ? 16 : 6)) > 0 : st === "done" || st === "error";
     led.style.setProperty("--led", alert ? COLORS.waiting : COLORS[st]);
     led.classList.toggle("on", on);
   }
@@ -849,19 +856,20 @@
   }
   const SOUNDS = {
     waiting: () => { tone(880, 0, 0.14); tone(660, 0.18, 0.2); },
+    urgent: () => { for (let i = 0; i < 6; i++) tone(1320, i * 0.14 + (i >= 3 ? 0.25 : 0), 0.09); },
     done: () => { tone(660, 0, 0.1); tone(880, 0.1, 0.1); tone(1320, 0.2, 0.22); },
     error: () => { tone(220, 0, 0.3, "square", 0.04); },
   };
   function play(name) {
-    if (snap && snap.night && name !== "waiting") return;  // quiet at night, as the device
+    if (snap && snap.night && name !== "waiting" && name !== "urgent") return;  // quiet at night, as the device
     if (soundOn && audio && SOUNDS[name]) SOUNDS[name]();
   }
 
+  // A new alert chimes once (onTransitions); once it has waited past the
+  // reminder time it turns urgent and beeps every 30 s, like the firmware.
+  const anyUrgent = () => !!snap && Object.values(snap.agents).some((a) => a.alert && a.urgent);
   function maybeBeep(t) {
-    if (!snap) return;
-    const alert = Object.values(snap.agents).some((a) => a.alert);
-    if (alert && t - lastAlertBeep > 8) { lastAlertBeep = t; play("waiting"); }
-    if (!alert) lastAlertBeep = 0;
+    if (anyUrgent() && t - lastAlertBeep > 30) { lastAlertBeep = t; play("urgent"); }
   }
 
   // React to transitions in new snapshots: jump to the face and chime.
@@ -874,7 +882,9 @@
     }
     let jump = false;
     for (const [name, a] of Object.entries(next.agents)) {
-      if (a.alert && !prev.alerts[name]) jump = true;
+      if (a.alert && !prev.alerts[name]) { jump = true; play("waiting"); }
+      if (a.alert && a.urgent && !prev.urgent[name]) { play("urgent"); lastAlertBeep = now(); }
+      prev.urgent[name] = a.alert && a.urgent;
       if (a.state !== prev.states[name] && (a.state === "done" || a.state === "error")) {
         play(a.state);
         if (next.focus === name) jump = true;
@@ -1066,6 +1076,13 @@
       b.classList.toggle("active", on); b.setAttribute("aria-checked", String(on));
     });
   }
+  const jumpBox = document.getElementById("jump"), nudgeSel = document.getElementById("nudge");
+  jumpBox.addEventListener("change", () => saveConfig({ jump: jumpBox.checked }));
+  nudgeSel.addEventListener("change", () => saveConfig({ nudge: Number(nudgeSel.value) }));
+  function renderReminders() {
+    jumpBox.checked = config.jump !== false;
+    nudgeSel.value = String(config.nudge ?? 120);
+  }
   function renderApprovals() {
     approvalsBox.checked = !!config.approvals;
     waitSel.value = String(config.approval_wait || 30);
@@ -1163,6 +1180,7 @@
     renderApprovals();
     renderNight();
     renderSkin();
+    renderReminders();
     pickNote.textContent = auto
       ? "自动模式：哪个 Agent 有活动会话就显示哪个，全部空闲时显示 OFFLINE。"
       : `已选 ${config.agents.length} 个。超过 2 个时顶栏用缩写，超过 3 个时列表页改为紧凑行。`;

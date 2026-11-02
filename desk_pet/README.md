@@ -159,6 +159,25 @@ Claude Code 或 Codex 要你批准一个操作（跑命令、改文件……）�
 - **长度**：电脑端按"汉字算 2 格"截断，状态行最多 48 格，权限请求最多 120 格。串口上直接发 UTF-8，一个汉字占 3 字节。
 - **网页模拟器**：用浏览器字体，本来就能显示中文。
 
+## 提醒：加急和跳回终端
+
+**加急提醒**：Agent 需要你时先响一声。如果超过设定时间（默认 2 分钟，可选 1 / 2 / 5 / 10 分钟或关闭）还没人处理：
+- 每 30 秒急促地响一次（三声高音，响两遍）。
+- 屏幕边框、进度条和信息卡变红并快速闪烁，CYD 的指示灯也快闪。
+- 信息卡上显示"已等 03:00"。
+- 按 B 确认或去电脑上处理后停止。以前是"需要你"期间每 8 秒响一次，现在改成先响一声、到时间再加急，平时更安静。
+
+**跳回终端**（macOS）：Agent 需要你、刚完成或出错时，按 B 确认的同时，Mac 会切到这个 Agent 所在的终端。
+- **Terminal 和 iTerm2**：切到具体的窗口和标签页。原理是 `hook_bridge.py` 记下 hook 所在的 tty（用 `ps` 查），再用 AppleScript 找出 tty 相同的标签页并选中；两个终端的脚本字典里都有这个属性。
+- **其他应用**（VS Code、Cursor、Warp、Ghostty 等）：只把应用切到前台。用的是 macOS 给每个由应用启动的进程设置的 `__CFBundleIdentifier` 环境变量，加上 `open -b`。
+- **tmux 里**：tty 对不上，会退回到"只把终端应用切到前台"。
+- **第一次使用**：macOS 会问是否允许 Python 控制 Terminal / iTerm2，选允许即可。之后可以在"系统设置 → 隐私与安全性 → 自动化"里修改。
+- tty 和应用 ID 都会先按严格格式校验，再作为参数传给 `osascript`，不会拼进脚本文本。
+- 在网页"提醒"里可以关掉；其他系统上这个功能不起作用。
+- 同类做法：[atarnvik/ccradar](https://pkg.go.dev/github.com/atarnvik/ccradar@v0.6.0)、[Neilos/claude-code-hooks](https://github.com/Neilos/claude-code-hooks)、[bufferings/shiibar-cc](https://github.com/bufferings/shiibar-cc)，都是"查 tty，再用 AppleScript 聚焦标签页"。
+
+**未在真机验证**：这个环境不是 Mac，AppleScript 部分只用模拟测试验证过调用顺序和参数，需要你在 Mac 上实际试一次。
+
 ## 夜间息屏
 
 在网页"夜间息屏"里打开，设定时间段（默认 23:00–07:00，可以跨午夜），选择"熄屏"或"调暗"。设置记在 `config.json` 的 `night`。
@@ -239,6 +258,7 @@ deskpet/usage.py    今日 Claude token 统计
 deskpet/server.py   HTTP 守护进程 + SSE + 模式配置
 deskpet/approvals.py  按键批准权限：挂起请求、等待决定
 deskpet/night.py    夜间息屏：时间段 → 亮 / 暗 / 熄屏
+deskpet/jump.py     按 B 时把 Agent 所在的终端切到前台（macOS）
 deskpet/demo.py     演示脚本（走真实的 hook 处理流程，按所选 Agent 分配角色）
 deskpet/device.py   USB 串口：给固件发状态帧、自动找设备、接收按键
 deskpet/weather.py  天气：Open-Meteo 地理编码 + 预报，后台定时刷新

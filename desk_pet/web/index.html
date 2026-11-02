@@ -52,6 +52,21 @@
     </div>
 
     <div class="group">
+      <h2>提醒</h2>
+      <label class="check"><input type="checkbox" id="jump"> 按 B 确认时，Mac 自动切到那个 Agent 的终端</label>
+      <div class="row wait">
+        <label for="nudge">需要你却没人管</label>
+        <select id="nudge">
+          <option value="60">1 分钟</option><option value="120">2 分钟</option>
+          <option value="300">5 分钟</option><option value="600">10 分钟</option><option value="0">不再提醒</option>
+        </select>
+        <span>后加急提醒</span>
+      </div>
+      <p class="note">需要你时先响一声；超过设定时间还没处理，就每 30 秒急促提醒一次，边框和灯变红快闪，直到你按 B 或处理掉。<br>
+        跳回终端：Terminal 和 iTerm2 能切到具体的标签页，其他应用（VS Code、Cursor、Warp 等）只把应用切到前台。第一次使用时 macOS 会询问是否允许控制终端，选允许。</p>
+    </div>
+
+    <div class="group">
       <h2>按键批准权限 <small>Claude Code / Codex</small></h2>
       <label class="check"><input type="checkbox" id="approvals"> 权限请求先发到桌宠：A 拒绝 / B 允许 / C 交给电脑</label>
       <div class="row wait">

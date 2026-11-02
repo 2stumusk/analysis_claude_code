@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlparse
 from . import agents as registry
 from . import approvals as approval_rules
 from . import demo
+from . import jump as jump_rules
 from . import night as night_rules
 from .approvals import Approvals
 from .core import AUTO_APPROVE_MODES, Tracker
@@ -41,6 +42,9 @@ PROTOCOL_VERSION = 1
 MAX_ROUTES = 1000
 PAGES = ["face", "clock", "weather", "agents", "stats"]  # button A cycles through these
 SKINS = ("cat", "eyes")  # face page: pixel cat, or the drawn eyes
+# Remind again (louder) when an agent has waited this many seconds unanswered; 0 = never.
+NUDGE_CHOICES = (0, 60, 120, 300, 600)
+NUDGE_DEFAULT = 120
 
 
 def open_meteo_service(city, on_change):
@@ -60,11 +64,14 @@ class App:
         self.device = None  # set by device.SerialLink while a board is connected
         self.viewers = 0    # web simulator pages open right now
         self.approvals = Approvals()
+        self.terminals = {}  # (agent, session) -> {"tty", "app"}: where it runs
+        self.jumper = jump_rules.Jumper()
         self.config_path = config_path
         self.config = {"mode": "custom", "agents": list(registry.DEFAULT_AGENTS),
                        "pages": list(PAGES), "city": None, "rotate": True,
                        "approvals": False, "approval_wait": approval_rules.DEFAULT_WAIT,
-                       "night": dict(night_rules.DEFAULT), "skin": "cat"}
+                       "night": dict(night_rules.DEFAULT), "skin": "cat",
+                       "jump": True, "nudge": NUDGE_DEFAULT}
         self.weather_factory = weather_factory
         self.weather = None
         if config_path and os.path.exists(config_path):
@@ -97,6 +104,10 @@ class App:
         if isinstance(cfg.get("approval_wait"), int) and not isinstance(cfg.get("approval_wait"), bool):
             self.config["approval_wait"] = max(approval_rules.MIN_WAIT,
                                                min(approval_rules.MAX_WAIT, cfg["approval_wait"]))
+        if isinstance(cfg.get("jump"), bool):
+            self.config["jump"] = cfg["jump"]
+        if cfg.get("nudge") in NUDGE_CHOICES and not isinstance(cfg.get("nudge"), bool):
+            self.config["nudge"] = cfg["nudge"]
         if cfg.get("skin") in SKINS:
             self.config["skin"] = cfg["skin"]
         if "night" in cfg:
@@ -167,13 +178,20 @@ class App:
         return self._apply(endpoint, payload, event)[1]
 
     def _apply(self, endpoint, payload, event=None):
+        hints = payload.get("_deskpet") if isinstance(payload, dict) else None
         agent = self.route(endpoint, payload)
+        where = jump_rules.clean(hints)
+        if where:
+            if len(self.terminals) >= MAX_ROUTES:
+                self.terminals.clear()
+            self.terminals[(agent, str(payload.get("session_id") or "default"))] = where
         ev = self.tracker.handle(agent, payload, event)
         if ev not in ("PermissionRequest", "Notification") and isinstance(payload, dict):
             # Any other event means the agent is no longer waiting on a held request.
             self.approvals.cancel_session(agent, str(payload.get("session_id") or "default"))
         if ev == "SessionEnd" and isinstance(payload, dict):
             self.routes.pop((endpoint, str(payload.get("session_id") or "")), None)
+            self.terminals.pop((agent, str(payload.get("session_id") or "default")), None)
         self.notify()
         return agent, ev
 
@@ -218,12 +236,22 @@ class App:
         if everyone:
             acted = self.tracker.ack()
         else:
-            acted = self.tracker.ack(agent or self.snapshot()["focus"])
+            agent = agent or self.snapshot()["focus"]
+            shown = self.tracker.snapshot([agent])["agents"].get(agent) if agent else None
+            acted = self.tracker.ack(agent)
+            if acted and shown and shown["state"] in jump_rules.NOTE_STATES:
+                self.jump_to(agent, shown["session"])
         action = ("ack_all" if everyone else "ack") if acted else "feed"
         if action == "feed":
             self.pet.feed()
         self.notify()
         return action
+
+    def jump_to(self, agent, session):
+        """Bring the terminal of `agent`'s `session` to the front, when enabled."""
+        if not self.config["jump"]:
+            return "off"
+        return self.jumper.jump(self.terminals.get((agent, str(session or "default"))))
 
     def start_demo(self, speed=1.0):
         if self.demo_stop is not None:
@@ -250,6 +278,10 @@ class App:
                                 "deadline": int(held.deadline), "wait": held.wait}
             if held.agent in snap["agents"]:  # the request owns the screen
                 snap["focus"], snap["rotation"] = held.agent, None
+        # An alert left unanswered for `nudge` seconds becomes urgent: louder, faster.
+        nudge, now = self.config["nudge"], time.time()
+        for entry in snap["agents"].values():
+            entry["urgent"] = bool(nudge and entry["alert"] and entry["since"] and now - entry["since"] >= nudge)
         snap["night"] = night_rules.level(self.config["night"])
         snap["skin"] = self.config["skin"]
         snap["weather"] = self.weather.snapshot() if self.weather else None

@@ -8,7 +8,9 @@ Grok notifications:  hook_bridge.py grok --grok-env                     (payload
 Besides the payload it sends a few hints so the daemon can tell who really ran
 the hook: the names of the parent processes (Grok also runs Claude Code's
 hooks), the host of ANTHROPIC_BASE_URL and ANTHROPIC_MODEL (Claude Code pointed
-at DeepSeek, Kimi or Qwen). No keys, tokens or full URLs are sent.
+at DeepSeek, Kimi or Qwen), and on macOS the terminal it runs in (tty and the
+app's bundle id, so button B can bring that tab to the front). No keys, tokens
+or full URLs are sent.
 
 It always exits 0 and prints nothing, with one exception: a PermissionRequest
 from Claude Code or Codex waits (up to the daemon's approval time) in case the
@@ -61,20 +63,36 @@ def parent_names(depth=5):
         return names
     if os.name == "nt":
         return names
-    out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,args="], capture_output=True,
+    out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,tty=,args="], capture_output=True,
                          text=True, timeout=1).stdout
     table = {}
     for line in out.splitlines():
-        parts = line.split(None, 2)
-        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
-            table[int(parts[0])] = (int(parts[1]), parts[2].split())
+        parts = line.split(None, 3)
+        if len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit():
+            table[int(parts[0])] = (int(parts[1]), parts[2], parts[3].split())
+    TTY[0] = _first_tty(table, os.getpid())
     for _ in range(depth):
         if pid not in table:
             break
-        ppid, args = table[pid]
+        ppid, _tty, args = table[pid]
         names.append(_name(args))
         pid = ppid
     return names
+
+
+TTY = [None]  # the hook's terminal, found by parent_names() from the same ps table
+
+
+def _first_tty(table, pid, depth=6):
+    """Controlling terminal of this process or its nearest ancestor ("/dev/ttys003")."""
+    for _ in range(depth):
+        if pid not in table:
+            return None
+        ppid, tty, _args = table[pid]
+        if tty not in ("?", "??", "-"):
+            return tty if tty.startswith("/dev/") else "/dev/" + tty
+        pid = ppid
+    return None
 
 
 def hints(forced):
@@ -90,6 +108,11 @@ def hints(forced):
         h["base_url_host"] = host
     if os.environ.get("ANTHROPIC_MODEL"):
         h["model"] = os.environ["ANTHROPIC_MODEL"][:80]
+    # Where the agent runs, so button B can bring that terminal tab to the front (macOS).
+    if TTY[0]:
+        h["tty"] = TTY[0]
+    if os.environ.get("__CFBundleIdentifier"):
+        h["app"] = os.environ["__CFBundleIdentifier"][:100]
     return h
 
 

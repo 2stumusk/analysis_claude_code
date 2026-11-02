@@ -287,6 +287,8 @@ bool parseFrame(const char* line, Model& m, float now) {
     ag.tools = (uint16_t)doc->num(a, "n", 0);
     ag.sessions = (uint8_t)doc->num(a, "k", 0);
     ag.alert = doc->num(a, "x", 0) != 0;
+    ag.urgent = doc->num(a, "u", 0) != 0;
+    ag.waited = (int32_t)doc->num(a, "w", -1);
   }
   int focus = (int)doc->num(root, "f", -1);
   next.focus = (focus >= 0 && focus < next.count) ? focus : -1;

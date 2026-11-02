@@ -158,6 +158,17 @@ bool anyAlert(const Model& m) {
   return false;
 }
 
+// An alert nobody answered within the reminder time (set on the PC).
+bool anyUrgent(const Model& m) {
+  if (!m.connected) return false;
+  for (int i = 0; i < m.count; i++) {
+    if (m.agents[i].alert && m.agents[i].urgent) return true;
+  }
+  return false;
+}
+
+const float kUrgentRepeat = 30;  // seconds between urgent reminders
+
 }  // namespace
 
 // ---------- time ----------
@@ -265,14 +276,22 @@ void Ui::update(const Model& m, float now) {
   for (int i = 0; i < m.count; i++) {
     const Agent& a = m.agents[i];
     State before = State::Offline;
-    bool alertBefore = false;
+    bool alertBefore = false, urgentBefore = false;
     for (int j = 0; j < prev_count_; j++) {
       if (strcmp(prev_ids_[j], a.id) == 0) {
         before = prev_states_[j];
         alertBefore = prev_alerts_[j];
+        urgentBefore = prev_urgent_[j];
       }
     }
-    if (a.alert && !alertBefore) jump = true;
+    if (a.alert && !alertBefore) {
+      jump = true;
+      sound_ = Sound::Waiting;  // once; it only repeats after it turns urgent
+    }
+    if (a.alert && a.urgent && !urgentBefore) {
+      sound_ = Sound::Urgent;
+      last_alert_beep_ = now;
+    }
     if (a.state != before && (a.state == State::Done || a.state == State::Error)) {
       sound_ = a.state == State::Done ? Sound::Done : Sound::Error;
       if (i == m.focus) jump = true;
@@ -283,6 +302,7 @@ void Ui::update(const Model& m, float now) {
     snprintf(prev_ids_[i], sizeof(prev_ids_[i]), "%s", m.agents[i].id);
     prev_states_[i] = m.agents[i].state;
     prev_alerts_[i] = m.agents[i].alert;
+    prev_urgent_[i] = m.agents[i].alert && m.agents[i].urgent;
   }
   // Alerts bring back the face, or the agent list when the face is switched off.
   if (jump && preview_ == State::Count) {
@@ -293,13 +313,9 @@ void Ui::update(const Model& m, float now) {
     }
   }
 
-  if (anyAlert(m)) {
-    if (now - last_alert_beep_ > 8) {
-      last_alert_beep_ = now;
-      if (sound_ == Sound::None) sound_ = Sound::Waiting;
-    }
-  } else {
-    last_alert_beep_ = -100;
+  if (anyUrgent(m) && now - last_alert_beep_ > kUrgentRepeat) {
+    last_alert_beep_ = now;
+    if (sound_ == Sound::None) sound_ = Sound::Urgent;
   }
 }
 
@@ -339,7 +355,7 @@ Sound Ui::takeSound() {
 bool Ui::led(const Model& m, float now, uint16_t* color) const {
   if (anyAlert(m)) {
     *color = colorOf(State::Waiting);
-    return sinf(now * 6) > 0;
+    return sinf(now * (anyUrgent(m) ? 16 : 6)) > 0;
   }
   State st = faceState(m);
   *color = colorOf(st);
@@ -488,8 +504,9 @@ void Ui::topBar(Gfx& g, const Model& m, float now) const {
 void Ui::alertRing(Gfx& g, const Model& m, float now) const {
   bool alert = anyAlert(m);
   if (!alert && faceState(m) != State::Waiting) return;
-  float a = alert ? 0.45f + 0.45f * sinf(now * 6) : 0.25f;
-  uint16_t c = blend(colorOf(State::Waiting), BG, a);
+  bool urgent = anyUrgent(m);  // unanswered too long: faster, redder
+  float a = alert ? 0.45f + 0.45f * sinf(now * (urgent ? 14 : 6)) : 0.25f;
+  uint16_t c = blend(urgent ? colorOf(State::Error) : colorOf(State::Waiting), BG, a);
   for (int i = 0; i < 4; i++) g.drawRoundRect(2 + i, 2 + i, W - 4 - 2 * i, H - 4 - 2 * i, 10 - i, c);
 }
 
@@ -536,7 +553,10 @@ void Ui::viewFace(Gfx& g, const Model& m, float now) const {
   }
 
   char buf[160];
-  if (!previewing && a && a->elapsed >= 0 && busy(st)) {
+  if (!previewing && a && st == State::Waiting && a->waited >= 0) {
+    fmtDur(a->waited + now - m.rx_time, buf, sizeof(buf));  // how long it has waited for you
+    g.text(buf, W - 12, 196, Font::MonoBold, a->urgent ? colorOf(State::Error) : color, Align::Right);
+  } else if (!previewing && a && a->elapsed >= 0 && busy(st)) {
     fmtDur(a->elapsed + now - m.rx_time, buf, sizeof(buf));
     g.text(buf, W - 12, 196, Font::MonoBold, FG, Align::Right);
   }
@@ -656,7 +676,11 @@ void Ui::viewCat(Gfx& g, const Model& m, float now) const {
 
   // Time and tool count, real numbers from the hooks.
   char stats[64] = "";
-  if (!previewing && a && a->elapsed >= 0 && busy(st)) {
+  if (!previewing && a && st == State::Waiting && a->waited >= 0) {
+    char dur[16];
+    fmtDur(a->waited + now - m.rx_time, dur, sizeof(dur));
+    snprintf(stats, sizeof(stats), "已等 %s", dur);
+  } else if (!previewing && a && a->elapsed >= 0 && busy(st)) {
     char dur[16];
     fmtDur(a->elapsed + now - m.rx_time, dur, sizeof(dur));
     snprintf(stats, sizeof(stats), "用时 %s", dur);
@@ -665,7 +689,8 @@ void Ui::viewCat(Gfx& g, const Model& m, float now) const {
     snprintf(stats + strlen(stats), sizeof(stats) - strlen(stats), "%s工具 %d 次", stats[0] ? " · " : "", a->tools);
   }
   int sw = stats[0] ? g.textWidth(stats, Font::Small) : 0;
-  if (stats[0]) g.text(stats, W - 22, 220, Font::Small, DIM, Align::Right);
+  bool late = st == State::Waiting && a && a->urgent && !previewing;
+  if (stats[0]) g.text(stats, W - 22, 220, Font::Small, late ? colorOf(State::Error) : DIM, Align::Right);
 
   // Activity bar: a sweep while busy, solid when done / failed, pulsing when it needs you.
   int bx = 22, bw = W - 44 - (sw ? sw + 10 : 0), by = 213;
@@ -674,7 +699,8 @@ void Ui::viewCat(Gfx& g, const Model& m, float now) const {
     if (st == State::Done || st == State::Error) {
       g.fillRoundRect(bx, by, bw, 5, 2, color);
     } else if (st == State::Waiting) {
-      g.fillRoundRect(bx, by, bw, 5, 2, blend(color, FAINT, 0.5f + 0.5f * sinf(now * 6)));
+      uint16_t c = late ? colorOf(State::Error) : color;
+      g.fillRoundRect(bx, by, bw, 5, 2, blend(c, FAINT, 0.5f + 0.5f * sinf(now * (late ? 14 : 6))));
     } else if (busy(st)) {
       int seg = bw / 3;
       int pos = (int)fmodf(now * 90, (float)(bw + seg)) - seg;
