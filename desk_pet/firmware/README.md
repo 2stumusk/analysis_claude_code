@@ -10,6 +10,7 @@
 - Claude Code、Codex 的实时状态
 - 无锡的真实天气
 - 像素猫表情页（Claude Code 改代码时的敲键盘动画）
+- 按 B 跳回 Agent 所在的终端（Mac）
 
 Core2 和 CYD 还没有真机实测。
 

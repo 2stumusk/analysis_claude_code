@@ -176,7 +176,7 @@ Claude Code 或 Codex 要你批准一个操作（跑命令、改文件……）�
 - 在网页"提醒"里可以关掉；其他系统上这个功能不起作用。
 - 同类做法：[atarnvik/ccradar](https://pkg.go.dev/github.com/atarnvik/ccradar@v0.6.0)、[Neilos/claude-code-hooks](https://github.com/Neilos/claude-code-hooks)、[bufferings/shiibar-cc](https://github.com/bufferings/shiibar-cc)，都是"查 tty，再用 AppleScript 聚焦标签页"。
 
-**未在真机验证**：这个环境不是 Mac，AppleScript 部分只用模拟测试验证过调用顺序和参数，需要你在 Mac 上实际试一次。
+**验证情况**：已在 Mac 上实测，按 B 能跳回终端。目前只用一种终端测过，Terminal / iTerm2 / 其他应用三种情况还没逐一分别验证。加急提醒还没在真机上确认。
 
 ## 夜间息屏
 
