@@ -123,7 +123,7 @@ class NudgeTest(unittest.TestCase):
         self.assertTrue(late["agents"]["claude"]["urgent"])
         frame2 = device_frame(late)
         self.assertEqual(frame2["a"][0]["u"], 1)
-        self.assertGreaterEqual(frame2["a"][0]["w"], 61)
+        self.assertGreaterEqual(frame2["a"][0]["w"], 60)  # whole seconds, rounded down
         self.assertNotEqual(frame_key(snap, frame), frame_key(late, frame2))  # sent right away
 
         app.button("B", "claude")  # acknowledged: no longer an alert, so not urgent
